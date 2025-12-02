@@ -1,0 +1,2897 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: *.svg
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+app.js
+Digitize and Market Your Biz API Endpoints.md
+package.json
+readme.md
+repomix-output.xml
+src/api/admin.routes.js
+src/api/auth.routes.js
+src/api/client.routes.js
+src/api/project.routes.js
+src/api/proposal.routes.js
+src/api/request.routes.js
+src/config/database.js
+src/controllers/admin.controller.js
+src/controllers/auth.controller.js
+src/controllers/client.controller.js
+src/controllers/project.controller.js
+src/controllers/proposal.controller.js
+src/controllers/request.controller.js
+src/middleware/auth.middleware.js
+src/middleware/error.middleware.js
+src/middleware/upload.middleware.js
+src/models/Client.js
+src/models/index.js
+src/models/Project.js
+src/models/ProjectAsset.js
+src/models/Proposal.js
+src/models/ProposalLineItem.js
+src/models/ServiceCategory.js
+src/models/ServiceRequest.js
+src/models/User.js
+src/services/crypto.service.js
+src/services/email.service.js
+src/services/pdf.service.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="readme.md">
+Create uploads folder and inside it quotations folder, also check env if missing
+
+1: Encryption: technicalVault must never be stored in plain text. Use crypto service (AES-256) in the controller/service layer before DB operations.
+2: PDFs: Proposals must generate a physical PDF file stored in uploads/proposals/ upon creation.
+3: Gating: The auth.middleware.js or auth.controller.js must strictly enforce the status check for login.
+</file>
+
+<file path=".gitignore">
+node_modules/
+.env
+uploads/
+*.log
+.DS_Store
+</file>
+
+<file path="app.js">
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const morgan = require("morgan");
+const helmet = require("helmet");
+const db = require("./src/models");
+const { errorMiddleware } = require("./src/middleware/error.middleware");
+
+const app = express();
+
+// Middleware
+app.use(helmet()); // Security headers
+app.use(cors());   // Allow frontend requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev")); // Logger
+
+// Static Folders
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// Basic Route (To test if it works)
+app.get("/", (req, res) => {
+  res.json({ message: "BizTech API is running..." });
+});
+
+app.use("/api/v1/auth", require("./src/api/auth.routes"));
+app.use("/api/v1/admin", require("./src/api/admin.routes"));
+app.use("/api/v1/clients", require("./src/api/client.routes"));
+app.use("/api/v1/requests", require("./src/api/request.routes"));
+app.use("/api/v1/proposals", require("./src/api/proposal.routes"));
+app.use("/api/v1/projects", require("./src/api/project.routes"));
+
+// Error Handling
+app.use(errorMiddleware);
+
+const PORT = process.env.PORT || 3000;
+
+// Sync DB and Start Server
+db.sequelize
+  .sync({ alter: true }) // 'alter: true' updates tables if you change models
+  .then(() => {
+    console.log("✅ Database Connected & Synced");
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => console.error("❌ Database Connection Failed:", err));
+</file>
+
+<file path="Digitize and Market Your Biz API Endpoints.md">
+# **Digitize and Market Your Biz API Endpoints**
+
+**Base URL:** http://localhost:3000/api/v1  
+**Authentication:** Bearer Token (JWT)  
+**Content-Type:** application/json
+
+---
+
+## **1\. Authentication (Gated Access)**
+
+*Implements FR-P-001, FR-P-002*
+
+### **Register User**
+
+**POST** /auth/register
+
+* **Description:** registers a new user. Status defaults to Pending Approval.  
+* **Access:** Public
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "fullName": "John Doe",  
+  "email": "client@example.com",  
+  "password": "password123",  
+  "mobile": "+971500000000",  
+  "companyName": "My Business LLC", // Creates Client Profile  
+  "role": "Client"  
+}
+
+*    
+* **Response (201):** { "message": "Registration successful. Account pending admin approval." }
+
+### **Login**
+
+**POST** /auth/login
+
+* **Description:** Authenticates user. **Blocker:** Must return error if status is Pending Approval.  
+* **Access:** Public  
+* **Body:** { "email": "...", "password": "..." }  
+* **Response (200):** { "accessToken": "...", "refreshToken": "...", "user": { ... } }  
+* **Error (403):** { "message": "Your account is currently under review by an administrator." }
+
+---
+
+## **2\. Admin Oversight** 
+
+*Implements FR-A-001, FR-A-003*
+
+### **Get Pending Approvals**
+
+**GET** /admin/users/pending
+
+* **Description:** List all users waiting for approval.  
+* **Access:** Admin  
+* **Response (200):** \[ { "id": 1, "fullName": "...", "email": "...", "createdAt": "..." }, ... \]
+
+### **Approve/Reject User**
+
+**PATCH** /admin/users/:id/status
+
+* **Description:** Activates an account or rejects it.  
+* **Access:** Admin
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "status": "Active" // or "Rejected"  
+}
+
+*    
+* **Note:** If "Active", trigger email notification (FR-S-001).
+
+### **Manage Service Categories**
+
+**POST** /admin/categories
+
+* **Description:** Create categories for the Service Request dropdown.  
+* **Access:** Admin  
+* **Body:** { "name": "SEO Services", "description": "Ranking improvements" }
+
+**GET** /admin/categories
+
+* **Description:** Get list of categories (for frontend dropdowns).  
+* **Access:** Authenticated (All roles)
+
+---
+
+## **3\. Client Profile & Technical Vault**
+
+*Implements FR-CL-001, NFR-SE-002*
+
+### **Get My Profile**
+
+**GET** /clients/me
+
+* **Description:** Gets client info including **decrypted** vault data.  
+* **Access:** Client
+
+**Response:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "companyName": "...",  
+  "technicalVault": "User: admin / Pass: 1234 (Decrypted)"  
+}
+
+*  
+
+### **Update Profile & Vault**
+
+**PUT** /clients/me
+
+* **Description:** Updates profile. Backend must **encrypt** technicalVault before saving.  
+* **Access:** Client
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "industry": "Real Estate",  
+  "websiteUrl": "https://example.com",  
+  "technicalVault": "Hosting: GoDaddy, User: admin, Pass: SuperSecret"  
+}
+
+---
+
+##      **4\. Service Requests (Needs Assessment)**
+
+*Implements FR-CL-002, FR-A-002*
+
+### **Submit Request**
+
+**POST** /requests
+
+* **Description:** Client submits a new need. Status defaults to Pending Triage.  
+* **Access:** Client
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "categoryId": 1,  
+  "details": "I need a complete re-brand and a new website.",  
+  "priority": "High"  
+}
+
+*  
+
+### **List Requests**
+
+**GET** /requests
+
+* **Description:**  
+  * **Admin:** Sees all Pending Triage requests.  
+  * **Agent:** Sees requests assigned to them.  
+  * **Client:** Sees only their own requests.  
+*   
+* **Access:** Authenticated (Logic depends on role)
+
+### **Assign Agent (Triage)**
+
+**PATCH** /requests/:id/assign
+
+* **Description:** Assigns an agent to a request.  
+* **Access:** Admin
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "agentId": 5  
+}
+
+* **Side Effect:** Updates status to Assigned.
+
+## **5\. Proposals (Quotes)**
+
+*Implements FR-AG-002, FR-CL-004*
+
+### **Generate Proposal**
+
+**POST** /proposals
+
+* **Description:** Creates a proposal line-by-line. Generates PDF on server.  
+* **Access:** Agent
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "requestId": 10,  
+  "items": \[  
+    { "description": "Homepage Design", "price": 1500 },  
+    { "description": "SEO Setup", "price": 500 }  
+  \]  
+}
+
+*    
+* **Side Effect:** Updates Request status to Quoted.
+
+### **Send Proposal**
+
+**POST** /proposals/:id/send
+
+* **Description:** Emails the PDF to the client.  
+* **Access:** Agent  
+* **Response:** { "message": "Proposal sent to client@example.com" }
+
+### **Respond to Proposal (Accept/Reject)**
+
+**PATCH** /proposals/:id/status
+
+* **Description:** Client accepts or rejects the quote.  
+* **Access:** Client  
+* **Body:** { "status": "Accepted" }  
+* **CRITICAL LOGIC:** If status is Accepted, the backend must automatically create a **Project** record.
+
+##      **6\. Project Dashboard**
+
+*Implements FR-AG-004, FR-CL-005*
+
+### **List Projects**
+
+**GET** /projects
+
+* **Description:** List active projects.  
+* **Access:** Client (Own), Agent (Assigned), Admin (All).
+
+### **Update Project Status**
+
+**PATCH** /projects/:id
+
+* **Description:** Update tracking metrics.  
+* **Access:** Agent
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "globalStatus": "In Progress", // Enum: Pending, In Progress, Testing, Delivered  
+  "progressPercent": 45,         // Integer 0-100  
+  "ecd": "2025-12-25"            // Estimated Completion Date  
+}
+
+---
+
+## **7\. Asset Management**
+
+*Implements FR-CL-006, FR-AG-005*
+
+### **Upload Asset**
+
+**POST** /projects/:id/assets
+
+* **Description:** Upload a file.  
+* **Access:** Client, Agent  
+* **Body:** Form-Data (file: binary)  
+* **Query Param:** ?type=Deliverable or ?type=ClientAsset
+
+### **List Assets**
+
+**GET** /projects/:id/assets
+
+* **Description:** Get list of files for a project.  
+* **Access:** Client, Agent  
+* **Response:** \[ { "fileName": "logo.png", "path": "/uploads/...", "type": "ClientAsset" } \]
+</file>
+
+<file path="package.json">
+{
+  "name": "biztech-digital-backend-api",
+  "version": "1.0.0",
+  "description": "Create uploads folder and inside it quotations folder, also check env if missing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mfaizan11/Biztech-Digital-Backend-Api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mfaizan11/Biztech-Digital-Backend-Api/issues"
+  },
+  "homepage": "https://github.com/mfaizan11/Biztech-Digital-Backend-Api#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "nodemailer": "^7.0.11",
+    "pdfkit": "^0.17.2",
+    "sequelize": "^6.37.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
+</file>
+
+<file path="repomix-output.xml">
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+app.js
+Digitize and Market Your Biz API Endpoints.md
+package.json
+readme.md
+src/api/admin.routes.js
+src/api/auth.routes.js
+src/api/client.routes.js
+src/api/project.routes.js
+src/api/proposal.routes.js
+src/api/request.routes.js
+src/config/database.js
+src/controllers/admin.controller.js
+src/controllers/auth.controller.js
+src/controllers/client.controller.js
+src/controllers/project.controller.js
+src/controllers/proposal.controller.js
+src/controllers/request.controller.js
+src/middleware/auth.middleware.js
+src/middleware/error.middleware.js
+src/middleware/upload.middleware.js
+src/models/Client.js
+src/models/index.js
+src/models/Project.js
+src/models/ProjectAsset.js
+src/models/Proposal.js
+src/models/ProposalLineItem.js
+src/models/ServiceCategory.js
+src/models/ServiceRequest.js
+src/models/User.js
+src/services/crypto.service.js
+src/services/email.service.js
+src/services/pdf.service.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".gitignore">
+node_modules/
+.env
+uploads/
+*.log
+.DS_Store
+</file>
+
+<file path="app.js">
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const morgan = require("morgan");
+const helmet = require("helmet");
+const db = require("./src/models");
+const { errorMiddleware } = require("./src/middleware/error.middleware");
+
+const app = express();
+
+// Middleware
+app.use(helmet()); // Security headers
+app.use(cors());   // Allow frontend requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev")); // Logger
+
+// Static Folders
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// Basic Route (To test if it works)
+app.get("/", (req, res) => {
+  res.json({ message: "BizTech API is running..." });
+});
+
+app.use("/api/v1/auth", require("./src/api/auth.routes"));
+app.use("/api/v1/admin", require("./src/api/admin.routes"));
+app.use("/api/v1/clients", require("./src/api/client.routes"));
+app.use("/api/v1/requests", require("./src/api/request.routes"));
+app.use("/api/v1/proposals", require("./src/api/proposal.routes"));
+app.use("/api/v1/projects", require("./src/api/project.routes"));
+
+// Error Handling
+app.use(errorMiddleware);
+
+const PORT = process.env.PORT || 3000;
+
+// Sync DB and Start Server
+db.sequelize
+  .sync({ alter: true }) // 'alter: true' updates tables if you change models
+  .then(() => {
+    console.log("✅ Database Connected & Synced");
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => console.error("❌ Database Connection Failed:", err));
+</file>
+
+<file path="Digitize and Market Your Biz API Endpoints.md">
+# **Digitize and Market Your Biz API Endpoints**
+
+**Base URL:** http://localhost:3000/api/v1  
+**Authentication:** Bearer Token (JWT)  
+**Content-Type:** application/json
+
+---
+
+## **1\. Authentication (Gated Access)**
+
+*Implements FR-P-001, FR-P-002*
+
+### **Register User**
+
+**POST** /auth/register
+
+* **Description:** registers a new user. Status defaults to Pending Approval.  
+* **Access:** Public
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "fullName": "John Doe",  
+  "email": "client@example.com",  
+  "password": "password123",  
+  "mobile": "+971500000000",  
+  "companyName": "My Business LLC", // Creates Client Profile  
+  "role": "Client"  
+}
+
+*    
+* **Response (201):** { "message": "Registration successful. Account pending admin approval." }
+
+### **Login**
+
+**POST** /auth/login
+
+* **Description:** Authenticates user. **Blocker:** Must return error if status is Pending Approval.  
+* **Access:** Public  
+* **Body:** { "email": "...", "password": "..." }  
+* **Response (200):** { "accessToken": "...", "refreshToken": "...", "user": { ... } }  
+* **Error (403):** { "message": "Your account is currently under review by an administrator." }
+
+---
+
+## **2\. Admin Oversight** 
+
+*Implements FR-A-001, FR-A-003*
+
+### **Get Pending Approvals**
+
+**GET** /admin/users/pending
+
+* **Description:** List all users waiting for approval.  
+* **Access:** Admin  
+* **Response (200):** \[ { "id": 1, "fullName": "...", "email": "...", "createdAt": "..." }, ... \]
+
+### **Approve/Reject User**
+
+**PATCH** /admin/users/:id/status
+
+* **Description:** Activates an account or rejects it.  
+* **Access:** Admin
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "status": "Active" // or "Rejected"  
+}
+
+*    
+* **Note:** If "Active", trigger email notification (FR-S-001).
+
+### **Manage Service Categories**
+
+**POST** /admin/categories
+
+* **Description:** Create categories for the Service Request dropdown.  
+* **Access:** Admin  
+* **Body:** { "name": "SEO Services", "description": "Ranking improvements" }
+
+**GET** /admin/categories
+
+* **Description:** Get list of categories (for frontend dropdowns).  
+* **Access:** Authenticated (All roles)
+
+---
+
+## **3\. Client Profile & Technical Vault**
+
+*Implements FR-CL-001, NFR-SE-002*
+
+### **Get My Profile**
+
+**GET** /clients/me
+
+* **Description:** Gets client info including **decrypted** vault data.  
+* **Access:** Client
+
+**Response:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "companyName": "...",  
+  "technicalVault": "User: admin / Pass: 1234 (Decrypted)"  
+}
+
+*  
+
+### **Update Profile & Vault**
+
+**PUT** /clients/me
+
+* **Description:** Updates profile. Backend must **encrypt** technicalVault before saving.  
+* **Access:** Client
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "industry": "Real Estate",  
+  "websiteUrl": "https://example.com",  
+  "technicalVault": "Hosting: GoDaddy, User: admin, Pass: SuperSecret"  
+}
+
+---
+
+##      **4\. Service Requests (Needs Assessment)**
+
+*Implements FR-CL-002, FR-A-002*
+
+### **Submit Request**
+
+**POST** /requests
+
+* **Description:** Client submits a new need. Status defaults to Pending Triage.  
+* **Access:** Client
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "categoryId": 1,  
+  "details": "I need a complete re-brand and a new website.",  
+  "priority": "High"  
+}
+
+*  
+
+### **List Requests**
+
+**GET** /requests
+
+* **Description:**  
+  * **Admin:** Sees all Pending Triage requests.  
+  * **Agent:** Sees requests assigned to them.  
+  * **Client:** Sees only their own requests.  
+*   
+* **Access:** Authenticated (Logic depends on role)
+
+### **Assign Agent (Triage)**
+
+**PATCH** /requests/:id/assign
+
+* **Description:** Assigns an agent to a request.  
+* **Access:** Admin
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "agentId": 5  
+}
+
+* **Side Effect:** Updates status to Assigned.
+
+## **5\. Proposals (Quotes)**
+
+*Implements FR-AG-002, FR-CL-004*
+
+### **Generate Proposal**
+
+**POST** /proposals
+
+* **Description:** Creates a proposal line-by-line. Generates PDF on server.  
+* **Access:** Agent
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "requestId": 10,  
+  "items": \[  
+    { "description": "Homepage Design", "price": 1500 },  
+    { "description": "SEO Setup", "price": 500 }  
+  \]  
+}
+
+*    
+* **Side Effect:** Updates Request status to Quoted.
+
+### **Send Proposal**
+
+**POST** /proposals/:id/send
+
+* **Description:** Emails the PDF to the client.  
+* **Access:** Agent  
+* **Response:** { "message": "Proposal sent to client@example.com" }
+
+### **Respond to Proposal (Accept/Reject)**
+
+**PATCH** /proposals/:id/status
+
+* **Description:** Client accepts or rejects the quote.  
+* **Access:** Client  
+* **Body:** { "status": "Accepted" }  
+* **CRITICAL LOGIC:** If status is Accepted, the backend must automatically create a **Project** record.
+
+##      **6\. Project Dashboard**
+
+*Implements FR-AG-004, FR-CL-005*
+
+### **List Projects**
+
+**GET** /projects
+
+* **Description:** List active projects.  
+* **Access:** Client (Own), Agent (Assigned), Admin (All).
+
+### **Update Project Status**
+
+**PATCH** /projects/:id
+
+* **Description:** Update tracking metrics.  
+* **Access:** Agent
+
+**Body:**  
+ code JSON  
+downloadcontent\_copy  
+expand\_less  
+    {  
+  "globalStatus": "In Progress", // Enum: Pending, In Progress, Testing, Delivered  
+  "progressPercent": 45,         // Integer 0-100  
+  "ecd": "2025-12-25"            // Estimated Completion Date  
+}
+
+---
+
+## **7\. Asset Management**
+
+*Implements FR-CL-006, FR-AG-005*
+
+### **Upload Asset**
+
+**POST** /projects/:id/assets
+
+* **Description:** Upload a file.  
+* **Access:** Client, Agent  
+* **Body:** Form-Data (file: binary)  
+* **Query Param:** ?type=Deliverable or ?type=ClientAsset
+
+### **List Assets**
+
+**GET** /projects/:id/assets
+
+* **Description:** Get list of files for a project.  
+* **Access:** Client, Agent  
+* **Response:** \[ { "fileName": "logo.png", "path": "/uploads/...", "type": "ClientAsset" } \]
+</file>
+
+<file path="package.json">
+{
+  "name": "biztech-digital-backend-api",
+  "version": "1.0.0",
+  "description": "Create uploads folder and inside it quotations folder, also check env if missing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mfaizan11/Biztech-Digital-Backend-Api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mfaizan11/Biztech-Digital-Backend-Api/issues"
+  },
+  "homepage": "https://github.com/mfaizan11/Biztech-Digital-Backend-Api#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "nodemailer": "^7.0.11",
+    "pdfkit": "^0.17.2",
+    "sequelize": "^6.37.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
+</file>
+
+<file path="readme.md">
+Create uploads folder and inside it quotations folder, also check env if missing
+
+1: Encryption: technicalVault must never be stored in plain text. Use crypto service (AES-256) in the controller/service layer before DB operations.
+2: PDFs: Proposals must generate a physical PDF file stored in uploads/proposals/ upon creation.
+3: Gating: The auth.middleware.js or auth.controller.js must strictly enforce the status check for login.
+</file>
+
+<file path="src/api/admin.routes.js">
+const express = require('express');
+const router = express.Router();
+// Import the new function
+const { getPendingUsers, updateUserStatus, createCategory, getCategories, createAgent } = require('../controllers/admin.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.use(protect);
+
+// Approval Routes
+router.get('/users/pending', authorize('Admin'), getPendingUsers);
+router.patch('/users/:id/status', authorize('Admin'), updateUserStatus);
+
+// Category Routes
+router.post('/categories', authorize('Admin'), createCategory);
+router.get('/categories', getCategories);
+
+// --- NEW ROUTE: Create Agent ---
+router.post('/agents', authorize('Admin'), createAgent);
+
+module.exports = router;
+</file>
+
+<file path="src/api/auth.routes.js">
+const express = require('express');
+const router = express.Router();
+const { register, login } = require('../controllers/auth.controller');
+
+router.post('/register', register);
+router.post('/login', login);
+
+module.exports = router;
+</file>
+
+<file path="src/api/client.routes.js">
+const express = require('express');
+const router = express.Router();
+const { getMyProfile, updateProfile } = require('../controllers/client.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.get('/me', protect, authorize('Client'), getMyProfile);
+router.put('/me', protect, authorize('Client'), updateProfile);
+
+module.exports = router;
+</file>
+
+<file path="src/api/project.routes.js">
+const express = require('express');
+const router = express.Router();
+const db = require('../models');
+const { protect } = require('../middleware/auth.middleware');
+
+// List Projects
+router.get('/', protect, async (req, res) => {
+    const projects = await db.Project.findAll({ include: ['Client', 'Request'] });
+    res.json(projects);
+});
+
+// Update Status (Agent)
+router.patch('/:id', protect, async (req, res) => {
+    await db.Project.update(req.body, { where: { id: req.params.id } });
+    res.json({ message: "Project Updated" });
+});
+
+module.exports = router;
+</file>
+
+<file path="src/api/proposal.routes.js">
+const express = require('express');
+const router = express.Router();
+// Update imports to include sendProposal
+const { createProposal, acceptProposal, sendProposal } = require('../controllers/proposal.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.post('/', protect, authorize('Agent'), createProposal);
+
+// NEW ROUTE
+router.post('/:id/send', protect, authorize('Agent'), sendProposal);
+
+router.patch('/:id/accept', protect, authorize('Client'), acceptProposal);
+
+module.exports = router;
+</file>
+
+<file path="src/api/request.routes.js">
+const express = require('express');
+const router = express.Router();
+const { createRequest, getRequests, assignRequest } = require('../controllers/request.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.post('/', protect, authorize('Client'), createRequest);
+router.get('/', protect, getRequests);
+router.patch('/:id/assign', protect, authorize('Admin'), assignRequest);
+
+module.exports = router;
+</file>
+
+<file path="src/config/database.js">
+require('dotenv').config();
+
+module.exports = {
+  development: {
+    username: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    dialect: process.env.DB_DIALECT,
+    logging: false
+  },
+  production: {
+    username: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    dialect: process.env.DB_DIALECT,
+    logging: false
+  }
+};
+</file>
+
+<file path="src/controllers/admin.controller.js">
+const bcrypt = require("bcryptjs"); 
+const db = require("../models");
+const User = db.User;
+const ServiceCategory = db.ServiceCategory;
+const { sendAccountApproval } = require('../services/email.service');
+
+
+exports.getPendingUsers = async (req, res, next) => {
+    try {
+        const users = await User.findAll({ where: { status: 'Pending Approval' } });
+        res.json(users);
+    } catch (error) { next(error); }
+};
+
+exports.updateUserStatus = async (req, res, next) => {
+    try {
+        const { status } = req.body; 
+        const user = await User.findByPk(req.params.id); 
+        
+        await User.update({ status }, { where: { id: req.params.id } });
+        
+        // Send Email using the new service function
+        if (user && status === 'Active') {
+            await sendAccountApproval(user.email, user.fullName);
+        }
+
+        res.json({ message: `User status updated to ${status}` });
+    } catch (error) { next(error); }
+};
+
+exports.createCategory = async (req, res, next) => {
+    try {
+        const category = await ServiceCategory.create(req.body);
+        res.status(201).json(category);
+    } catch (error) { next(error); }
+};
+
+exports.getCategories = async (req, res, next) => {
+    try {
+        const categories = await ServiceCategory.findAll();
+        res.json(categories);
+    } catch (error) { next(error); }
+};
+
+exports.createAgent = async (req, res, next) => {
+    try {
+        const { fullName, email, password, mobile } = req.body;
+
+        // Check if user exists
+        const exists = await User.findOne({ where: { email } });
+        if (exists) return res.status(400).json({ message: "Email already exists" });
+
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // Create Agent immediately as 'Active'
+        const agent = await User.create({
+            fullName,
+            email,
+            password: hashedPassword,
+            role: 'Agent',
+            mobile,
+            status: 'Active' // No approval needed since Admin created it
+        });
+
+        // Optional: Send email to Agent with credentials here
+
+        res.status(201).json({ 
+            message: "Agent created successfully.", 
+            agent: { id: agent.id, email: agent.email, name: agent.fullName } 
+        });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/auth.controller.js">
+const db = require("../models");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = db.User;
+const Client = db.Client;
+
+exports.register = async (req, res, next) => {
+  try {
+    const { fullName, email, password, role, companyName, mobile } = req.body;
+
+     // Prevent Agents/Admins from self-registering publicly
+    if (role === 'Agent' || role === 'Admin') {
+        return res.status(403).json({ 
+            message: "Restricted role. Agents must be added by an Administrator." 
+        });
+    }
+    
+    // Check existing
+    const exists = await User.findOne({ where: { email } });
+    if (exists) return res.status(400).json({ message: "Email already exists" });
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const t = await db.sequelize.transaction();
+    try {
+        const user = await User.create({
+            fullName, email, password: hashedPassword, role, mobile,
+            status: 'Pending Approval' // Gated Access
+        }, { transaction: t });
+
+        if (role === 'Client') {
+            await Client.create({ userId: user.id, companyName }, { transaction: t });
+        }
+
+        await t.commit();
+        res.status(201).json({ message: "Registration successful. Please wait for Admin approval." });
+    } catch (err) {
+        await t.rollback();
+        throw err;
+    }
+  } catch (error) { next(error); }
+};
+
+exports.login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ where: { email } });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Gatekeeper Check
+    if (user.status !== 'Active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Contact Admin.` });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, user: { id: user.id, name: user.fullName, role: user.role } });
+  } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/client.controller.js">
+const db = require("../models");
+const { encrypt, decrypt } = require("../services/crypto.service");
+const Client = db.Client;
+
+exports.getMyProfile = async (req, res, next) => {
+    try {
+        const profile = await Client.findOne({ where: { userId: req.user.id } });
+        if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+        // Decrypt vault before sending
+        if (profile.technicalVault) {
+            profile.technicalVault = decrypt(profile.technicalVault);
+        }
+        res.json(profile);
+    } catch (error) { next(error); }
+};
+
+exports.updateProfile = async (req, res, next) => {
+    try {
+        const { industry, websiteUrl, technicalVault } = req.body;
+        const updateData = { industry, websiteUrl };
+        
+        // Encrypt vault if provided
+        if (technicalVault) {
+            updateData.technicalVault = encrypt(technicalVault);
+        }
+
+        await Client.update(updateData, { where: { userId: req.user.id } });
+        res.json({ message: "Profile Updated" });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/project.controller.js">
+const db = require("../models");
+const Project = db.Project;
+const ProjectAsset = db.ProjectAsset;
+
+// List Projects (Filtered by Role)
+exports.getProjects = async (req, res, next) => {
+    try {
+        let where = {};
+        if (req.user.role === 'Client') {
+            where.clientId = req.user.ClientProfile?.id; 
+            // Note: Ensure User->Client association is loaded or use req.user.ClientProfile.id logic
+        } else if (req.user.role === 'Agent') {
+            where.agentId = req.user.id;
+        }
+        
+        // If Admin, empty where clause (sees all)
+
+        const projects = await Project.findAll({ 
+            where,
+            include: ['Client', 'Request', 'Agent'] 
+        });
+        res.json(projects);
+    } catch (error) { next(error); }
+};
+
+// Update Project Status
+exports.updateProjectStatus = async (req, res, next) => {
+    try {
+        // Add logic to check if user owns project if needed
+        await Project.update(req.body, { where: { id: req.params.id } });
+        res.json({ message: "Project Updated" });
+    } catch (error) { next(error); }
+};
+
+// Upload Asset
+exports.uploadAsset = async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+        const projectId = req.params.id;
+        const type = req.query.type || 'ClientAsset'; // 'ClientAsset' or 'Deliverable'
+
+        const asset = await ProjectAsset.create({
+            projectId,
+            filePath: req.file.path,
+            fileName: req.file.originalname,
+            type
+        });
+
+        res.status(201).json(asset);
+    } catch (error) { next(error); }
+};
+
+// Get Assets
+exports.getAssets = async (req, res, next) => {
+    try {
+        const assets = await ProjectAsset.findAll({ 
+            where: { projectId: req.params.id } 
+        });
+        res.json(assets);
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/proposal.controller.js">
+const db = require("../models");
+const { generateProposalPDF } = require("../services/pdf.service"); 
+const { sendProposalEmail } = require("../services/email.service"); 
+const Proposal = db.Proposal;
+const ProposalLineItem = db.ProposalLineItem;
+const ServiceRequest = db.ServiceRequest;
+const Project = db.Project;
+const Client = db.Client; // Needed for client name
+
+exports.createProposal = async (req, res, next) => {
+    try {
+        const { requestId, items } = req.body; // items = [{ description, price }]
+        
+        // Calculate Total
+        const totalAmount = items.reduce((sum, item) => sum + Number(item.price), 0);
+
+        const t = await db.sequelize.transaction();
+        try {
+            // 1. Create Proposal Record
+            const proposal = await Proposal.create({
+                requestId,
+                agentId: req.user.id,
+                totalAmount,
+                pdfPath: "pending..." // Temporary
+            }, { transaction: t });
+
+            // 2. Create Line Items
+            const lineItems = items.map(i => ({ ...i, proposalId: proposal.id }));
+            await ProposalLineItem.bulkCreate(lineItems, { transaction: t });
+
+            // 3. Update Request Status
+            await ServiceRequest.update({ status: 'Quoted' }, { where: { id: requestId }, transaction: t });
+
+            // 4. Generate PDF
+            // Fetch Client Name for PDF
+            const requestData = await ServiceRequest.findByPk(requestId, { include: ['Client'] });
+            const clientName = requestData?.Client?.companyName || "Valued Client";
+
+            const pdfPath = await generateProposalPDF(proposal.id, clientName, items, totalAmount);
+            
+            // Update PDF Path
+            proposal.pdfPath = pdfPath;
+            await proposal.save({ transaction: t });
+
+            await t.commit();
+            res.status(201).json(proposal);
+        } catch (err) { await t.rollback(); throw err; }
+    } catch (error) { next(error); }
+};
+
+exports.sendProposal = async (req, res, next) => {
+    try {
+        const proposalId = req.params.id;
+
+        // Fetch proposal with Client info
+        const proposal = await db.Proposal.findByPk(proposalId, {
+            include: [
+                { 
+                    model: db.ServiceRequest, 
+                    as: 'Request',
+                    include: [{ model: db.Client, as: 'Client', include: ['User'] }] 
+                }
+            ]
+        });
+
+        if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+        if (!proposal.pdfPath) return res.status(400).json({ message: "PDF not generated yet" });
+
+        const clientUser = proposal.Request.Client.User;
+        const clientName = clientUser.fullName;
+        const clientEmail = clientUser.email;
+
+        // Send Email
+        await sendProposalEmail(clientEmail, clientName, proposal.id, proposal.pdfPath);
+
+        // Update status to 'Sent' if it was Draft
+        if (proposal.status === 'Draft') {
+            await proposal.update({ status: 'Sent' });
+        }
+
+        res.json({ message: `Proposal sent to ${clientEmail}` });
+    } catch (error) { next(error); }
+};
+
+// ... keep acceptProposal as is
+exports.acceptProposal = async (req, res, next) => {
+    // ... (Your existing code for acceptProposal)
+    try {
+        const proposal = await Proposal.findByPk(req.params.id, {
+            include: [{ model: ServiceRequest, as: 'Request' }]
+        });
+
+        if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+
+        const t = await db.sequelize.transaction();
+        try {
+            // Update Proposal
+            await proposal.update({ status: 'Accepted' }, { transaction: t });
+            
+            // Update Request
+            await ServiceRequest.update({ status: 'Converted' }, { where: { id: proposal.requestId }, transaction: t });
+
+            // CREATE PROJECT
+            const project = await Project.create({
+                requestId: proposal.requestId,
+                clientId: proposal.Request.clientId,
+                agentId: proposal.AgentId || req.user.id, // Fallback logic needed if AgentId isn't loaded
+                globalStatus: 'Pending'
+            }, { transaction: t });
+
+            await t.commit();
+            res.json({ message: "Proposal Accepted & Project Started", projectId: project.id });
+        } catch (err) { await t.rollback(); throw err; }
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/request.controller.js">
+const db = require("../models");
+const ServiceRequest = db.ServiceRequest;
+
+exports.createRequest = async (req, res, next) => {
+    try {
+        const client = await db.Client.findOne({ where: { userId: req.user.id } });
+        if (!client) return res.status(404).json({ message: "Client profile missing" });
+
+        const request = await ServiceRequest.create({
+            clientId: client.id,
+            categoryId: req.body.categoryId,
+            details: req.body.details,
+            priority: req.body.priority
+        });
+        res.status(201).json(request);
+    } catch (error) { next(error); }
+};
+
+exports.getRequests = async (req, res, next) => {
+    try {
+        let where = {};
+        if (req.user.role === 'Client') {
+            const client = await db.Client.findOne({ where: { userId: req.user.id } });
+            where.clientId = client.id;
+        } else if (req.user.role === 'Agent') {
+            where.agentId = req.user.id;
+        } else if (req.user.role === 'Admin') {
+            where.status = 'Pending Triage'; // Admin triage view
+        }
+
+        const requests = await ServiceRequest.findAll({ 
+            where, 
+            include: ['Client', 'Category', 'AssignedAgent'] 
+        });
+        res.json(requests);
+    } catch (error) { next(error); }
+};
+
+exports.assignRequest = async (req, res, next) => {
+    try {
+        const { agentId } = req.body;
+        await ServiceRequest.update(
+            { agentId, status: 'Assigned' },
+            { where: { id: req.params.id } }
+        );
+        res.json({ message: "Agent Assigned" });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/middleware/auth.middleware.js">
+const jwt = require("jsonwebtoken");
+const { User } = require("../models");
+
+exports.protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (!token) return res.status(401).json({ message: "Not authorized to access this route" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decoded.id);
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Gatekeeper: Check Status
+    if (user.status !== 'Active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Access Denied.` });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Not authorized, token failed" });
+  }
+};
+
+exports.authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: `Role ${req.user.role} is not authorized` });
+    }
+    next();
+  };
+};
+</file>
+
+<file path="src/middleware/error.middleware.js">
+const errorMiddleware = (err, req, res, next) => {
+    console.error(`❌ Error: ${err.message}`);
+    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+    res.status(statusCode).json({
+        message: err.message,
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+    });
+};
+
+module.exports = { errorMiddleware };
+</file>
+
+<file path="src/middleware/upload.middleware.js">
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// Ensure directories exist
+const createDir = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    let uploadPath = "uploads/assets"; // Default
+    // You can segregate based on route or type if needed
+    createDir(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    // timestamp-filename.ext
+    cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`);
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|pdf|zip|rar|doc|docx/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error("Error: File type not supported!"));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: fileFilter,
+});
+
+module.exports = upload;
+</file>
+
+<file path="src/models/Client.js">
+module.exports = (sequelize, DataTypes) => {
+    const Client = sequelize.define('Client', {
+        id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+        companyName: { type: DataTypes.STRING },
+        industry: { type: DataTypes.STRING },
+        websiteUrl: { type: DataTypes.STRING },
+        technicalVault: { type: DataTypes.TEXT } // Stores Encrypted String
+    });
+
+    Client.associate = (models) => {
+        Client.belongsTo(models.User, { foreignKey: 'userId', as: 'User' });
+        Client.hasMany(models.ServiceRequest, { foreignKey: 'clientId', as: 'Requests' });
+        Client.hasMany(models.Project, { foreignKey: 'clientId', as: 'Projects' });
+    };
+    return Client;
+};
+</file>
+
+<file path="src/models/index.js">
+const fs = require('fs');
+const path = require('path');
+const Sequelize = require('sequelize');
+const basename = path.basename(__filename);
+const env = process.env.NODE_ENV || 'development';
+const config = require('../config/database')[env];
+const db = {};
+
+let sequelize;
+if (config.use_env_variable) {
+  sequelize = new Sequelize(process.env[config.use_env_variable], config);
+} else {
+  sequelize = new Sequelize(config.database, config.username, config.password, config);
+}
+
+fs
+  .readdirSync(__dirname)
+  .filter(file => {
+    return (file.indexOf('.') !== 0) && (file !== basename) && (file.slice(-3) === '.js');
+  })
+  .forEach(file => {
+    const model = require(path.join(__dirname, file))(sequelize, Sequelize.DataTypes);
+    db[model.name] = model;
+  });
+
+Object.keys(db).forEach(modelName => {
+  if (db[modelName].associate) {
+    db[modelName].associate(db);
+  }
+});
+
+db.sequelize = sequelize;
+db.Sequelize = Sequelize;
+
+module.exports = db;
+</file>
+
+<file path="src/models/Project.js">
+module.exports = (sequelize, DataTypes) => {
+    const Project = sequelize.define('Project', {
+        globalStatus: { 
+            type: DataTypes.ENUM('Pending', 'In Progress', 'Testing', 'Delivered'),
+            defaultValue: 'Pending' 
+        },
+        progressPercent: { type: DataTypes.INTEGER, defaultValue: 0 },
+        ecd: { type: DataTypes.DATEONLY }, // Estimated Completion Date
+    });
+
+    Project.associate = (models) => {
+        Project.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
+        Project.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
+        Project.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
+        Project.hasMany(models.ProjectAsset, { foreignKey: 'projectId', as: 'Assets' });
+    };
+    return Project;
+};
+</file>
+
+<file path="src/models/ProjectAsset.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProjectAsset = sequelize.define('ProjectAsset', {
+        filePath: { type: DataTypes.STRING, allowNull: false },
+        fileName: { type: DataTypes.STRING },
+        type: { type: DataTypes.ENUM('ClientAsset', 'Deliverable'), defaultValue: 'ClientAsset' }
+    });
+    ProjectAsset.associate = (models) => {
+        ProjectAsset.belongsTo(models.Project, { foreignKey: 'projectId' });
+    };
+    return ProjectAsset;
+};
+</file>
+
+<file path="src/models/Proposal.js">
+module.exports = (sequelize, DataTypes) => {
+    const Proposal = sequelize.define('Proposal', {
+        status: { 
+            type: DataTypes.ENUM('Draft', 'Sent', 'Accepted', 'Rejected'),
+            defaultValue: 'Draft' 
+        },
+        totalAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0.00 },
+        pdfPath: { type: DataTypes.STRING }
+    });
+
+    Proposal.associate = (models) => {
+        Proposal.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
+        Proposal.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
+        Proposal.hasMany(models.ProposalLineItem, { foreignKey: 'proposalId', as: 'Items' });
+    };
+    return Proposal;
+};
+</file>
+
+<file path="src/models/ProposalLineItem.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProposalLineItem = sequelize.define('ProposalLineItem', {
+        description: { type: DataTypes.STRING, allowNull: false },
+        price: { type: DataTypes.DECIMAL(10, 2), allowNull: false }
+    });
+    ProposalLineItem.associate = (models) => {
+        ProposalLineItem.belongsTo(models.Proposal, { foreignKey: 'proposalId' });
+    };
+    return ProposalLineItem;
+};
+</file>
+
+<file path="src/models/ServiceCategory.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceCategory = sequelize.define('ServiceCategory', {
+        name: { type: DataTypes.STRING, allowNull: false, unique: true },
+        description: { type: DataTypes.TEXT }
+    });
+    return ServiceCategory;
+};
+</file>
+
+<file path="src/models/ServiceRequest.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceRequest = sequelize.define('ServiceRequest', {
+        details: { type: DataTypes.TEXT, allowNull: false },
+        priority: { type: DataTypes.ENUM('Low', 'Medium', 'High'), defaultValue: 'Medium' },
+        status: { 
+            type: DataTypes.ENUM('Pending Triage', 'Assigned', 'Quoted', 'Converted', 'Rejected'),
+            defaultValue: 'Pending Triage' 
+        }
+    });
+
+    ServiceRequest.associate = (models) => {
+        ServiceRequest.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
+        ServiceRequest.belongsTo(models.User, { foreignKey: 'agentId', as: 'AssignedAgent' });
+        ServiceRequest.belongsTo(models.ServiceCategory, { foreignKey: 'categoryId', as: 'Category' });
+        ServiceRequest.hasOne(models.Proposal, { foreignKey: 'requestId', as: 'Proposal' });
+    };
+    return ServiceRequest;
+};
+</file>
+
+<file path="src/models/User.js">
+module.exports = (sequelize, DataTypes) => {
+  const User = sequelize.define("User", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    fullName: { type: DataTypes.STRING, allowNull: false },
+    email: { type: DataTypes.STRING, allowNull: false, unique: true, validate: { isEmail: true } },
+    password: { type: DataTypes.STRING, allowNull: false },
+    role: { type: DataTypes.ENUM("Admin", "Agent", "Client"), allowNull: false },
+    mobile: { type: DataTypes.STRING },
+    status: { 
+        type: DataTypes.ENUM('Pending Approval', 'Active', 'Rejected'),
+        defaultValue: 'Pending Approval' 
+    }
+  });
+
+  User.associate = (models) => {
+    User.hasOne(models.Client, { foreignKey: "userId", as: "ClientProfile" });
+    User.hasMany(models.ServiceRequest, { foreignKey: 'agentId', as: 'AssignedRequests' });
+    User.hasMany(models.Project, { foreignKey: 'agentId', as: 'ManagedProjects' });
+  };
+  return User;
+};
+</file>
+
+<file path="src/services/crypto.service.js">
+const crypto = require('crypto');
+const algorithm = 'aes-256-ctr';
+
+// Ensure this key is exactly 32 chars in .env, or we hash it to force 32 bytes
+const getKey = () => crypto.createHash('sha256').update(String(process.env.VAULT_SECRET)).digest('base64').substr(0, 32);
+
+exports.encrypt = (text) => {
+    if (!text) return null;
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(algorithm, getKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+};
+
+exports.decrypt = (hash) => {
+    if (!hash) return null;
+    const parts = hash.split(':');
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encryptedText = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv(algorithm, getKey(), iv);
+    const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
+    return decrypted.toString();
+};
+</file>
+
+<file path="src/services/email.service.js">
+const nodemailer = require("nodemailer");
+const path = require("path");
+const fs = require("fs");
+
+// Create Transporter
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// Generic Send Function
+const sendEmail = async (to, subject, html, attachments = []) => {
+  try {
+    const info = await transporter.sendMail({
+      from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL}>`,
+      to,
+      subject,
+      html,
+      attachments,
+    });
+    console.log("Message sent: %s", info.messageId);
+    return info;
+  } catch (error) {
+    console.error("Error sending email:", error);
+    throw new Error("Email service failed");
+  }
+};
+
+// 1. Account Approval Email
+exports.sendAccountApproval = async (email, name) => {
+  const subject = "Your BizTech Account is Approved!";
+  const html = `
+    <h3>Hello ${name},</h3>
+    <p>Great news! Your account has been approved by our administrators.</p>
+    <p>You can now login to your dashboard to view services and submit requests.</p>
+    <br>
+    <p>Regards,<br>BizTech Team</p>
+  `;
+  return sendEmail(email, subject, html);
+};
+
+// 2. Send Proposal PDF
+exports.sendProposalEmail = async (clientEmail, clientName, proposalId, pdfRelativePath) => {
+  const subject = `Project Proposal #${proposalId} - Digitize Your Biz`;
+  const html = `
+    <h3>Hello ${clientName},</h3>
+    <p>Please find attached the proposal for your requested services.</p>
+    <p>You can review and accept this proposal directly from your dashboard.</p>
+    <br>
+    <p>Regards,<br>BizTech Team</p>
+  `;
+
+  // Resolve full path for attachment
+  const fullPath = path.join(__dirname, "../../", pdfRelativePath);
+
+  if (!fs.existsSync(fullPath)) {
+    throw new Error("Proposal PDF file not found");
+  }
+
+  const attachments = [
+    {
+      filename: `Proposal-${proposalId}.pdf`,
+      path: fullPath,
+    },
+  ];
+
+  return sendEmail(clientEmail, subject, html, attachments);
+};
+
+// Export generic if needed elsewhere
+exports.sendEmail = sendEmail;
+</file>
+
+<file path="src/services/pdf.service.js">
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
+
+exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument();
+      const fileName = `proposal-${proposalId}-${Date.now()}.pdf`;
+      const uploadDir = path.join(__dirname, "../../uploads/proposals");
+      
+      // Ensure directory exists
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      const filePath = path.join(uploadDir, fileName);
+      const writeStream = fs.createWriteStream(filePath);
+
+      doc.pipe(writeStream);
+
+      // Header
+      doc.fontSize(25).text("Digitize Your Biz", { align: "center" });
+      doc.moveDown();
+      doc.fontSize(18).text("Project Proposal", { align: "center" });
+      doc.moveDown();
+
+      // Client Info
+      doc.fontSize(12).text(`Client: ${clientName}`);
+      doc.text(`Date: ${new Date().toLocaleDateString()}`);
+      doc.moveDown();
+
+      // Line Items
+      doc.text("Services Included:", { underline: true });
+      doc.moveDown(0.5);
+
+      items.forEach((item) => {
+        doc.text(`- ${item.description}: $${item.price}`);
+      });
+
+      doc.moveDown();
+      doc.fontSize(14).text(`Total Amount: $${totalAmount}`, { bold: true });
+
+      doc.end();
+
+      writeStream.on("finish", () => {
+        // Return relative path for DB storage
+        resolve(`uploads/proposals/${fileName}`);
+      });
+
+      writeStream.on("error", (err) => {
+        reject(err);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+</file>
+
+</files>
+</file>
+
+<file path="src/api/admin.routes.js">
+const express = require('express');
+const router = express.Router();
+// Import the new function
+const { getPendingUsers, updateUserStatus, createCategory, getCategories, createAgent } = require('../controllers/admin.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.use(protect);
+
+// Approval Routes
+router.get('/users/pending', authorize('Admin'), getPendingUsers);
+router.patch('/users/:id/status', authorize('Admin'), updateUserStatus);
+
+// Category Routes
+router.post('/categories', authorize('Admin'), createCategory);
+router.get('/categories', getCategories);
+
+// --- NEW ROUTE: Create Agent ---
+router.post('/agents', authorize('Admin'), createAgent);
+
+module.exports = router;
+</file>
+
+<file path="src/api/auth.routes.js">
+const express = require('express');
+const router = express.Router();
+const { register, login } = require('../controllers/auth.controller');
+
+router.post('/register', register);
+router.post('/login', login);
+
+module.exports = router;
+</file>
+
+<file path="src/api/client.routes.js">
+const express = require('express');
+const router = express.Router();
+const { getMyProfile, updateProfile } = require('../controllers/client.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.get('/me', protect, authorize('Client'), getMyProfile);
+router.put('/me', protect, authorize('Client'), updateProfile);
+
+module.exports = router;
+</file>
+
+<file path="src/api/project.routes.js">
+const express = require('express');
+const router = express.Router();
+const db = require('../models');
+const { protect } = require('../middleware/auth.middleware');
+
+// List Projects
+router.get('/', protect, async (req, res) => {
+    const projects = await db.Project.findAll({ include: ['Client', 'Request'] });
+    res.json(projects);
+});
+
+// Update Status (Agent)
+router.patch('/:id', protect, async (req, res) => {
+    await db.Project.update(req.body, { where: { id: req.params.id } });
+    res.json({ message: "Project Updated" });
+});
+
+module.exports = router;
+</file>
+
+<file path="src/api/proposal.routes.js">
+const express = require('express');
+const router = express.Router();
+// Update imports to include sendProposal
+const { createProposal, acceptProposal, sendProposal } = require('../controllers/proposal.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.post('/', protect, authorize('Agent'), createProposal);
+
+// NEW ROUTE
+router.post('/:id/send', protect, authorize('Agent'), sendProposal);
+
+router.patch('/:id/accept', protect, authorize('Client'), acceptProposal);
+
+module.exports = router;
+</file>
+
+<file path="src/api/request.routes.js">
+const express = require('express');
+const router = express.Router();
+const { createRequest, getRequests, assignRequest } = require('../controllers/request.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.post('/', protect, authorize('Client'), createRequest);
+router.get('/', protect, getRequests);
+router.patch('/:id/assign', protect, authorize('Admin'), assignRequest);
+
+module.exports = router;
+</file>
+
+<file path="src/config/database.js">
+require('dotenv').config();
+
+module.exports = {
+  development: {
+    username: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    dialect: process.env.DB_DIALECT,
+    logging: false
+  },
+  production: {
+    username: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    dialect: process.env.DB_DIALECT,
+    logging: false
+  }
+};
+</file>
+
+<file path="src/controllers/admin.controller.js">
+const bcrypt = require("bcryptjs"); 
+const db = require("../models");
+const User = db.User;
+const ServiceCategory = db.ServiceCategory;
+const { sendAccountApproval } = require('../services/email.service');
+
+
+exports.getPendingUsers = async (req, res, next) => {
+    try {
+        const users = await User.findAll({ where: { status: 'Pending Approval' } });
+        res.json(users);
+    } catch (error) { next(error); }
+};
+
+exports.updateUserStatus = async (req, res, next) => {
+    try {
+        const { status } = req.body; 
+        const user = await User.findByPk(req.params.id); 
+        
+        await User.update({ status }, { where: { id: req.params.id } });
+        
+        // Send Email using the new service function
+        if (user && status === 'Active') {
+            await sendAccountApproval(user.email, user.fullName);
+        }
+
+        res.json({ message: `User status updated to ${status}` });
+    } catch (error) { next(error); }
+};
+
+exports.createCategory = async (req, res, next) => {
+    try {
+        const category = await ServiceCategory.create(req.body);
+        res.status(201).json(category);
+    } catch (error) { next(error); }
+};
+
+exports.getCategories = async (req, res, next) => {
+    try {
+        const categories = await ServiceCategory.findAll();
+        res.json(categories);
+    } catch (error) { next(error); }
+};
+
+exports.createAgent = async (req, res, next) => {
+    try {
+        const { fullName, email, password, mobile } = req.body;
+
+        // Check if user exists
+        const exists = await User.findOne({ where: { email } });
+        if (exists) return res.status(400).json({ message: "Email already exists" });
+
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // Create Agent immediately as 'Active'
+        const agent = await User.create({
+            fullName,
+            email,
+            password: hashedPassword,
+            role: 'Agent',
+            mobile,
+            status: 'Active' // No approval needed since Admin created it
+        });
+
+        // Optional: Send email to Agent with credentials here
+
+        res.status(201).json({ 
+            message: "Agent created successfully.", 
+            agent: { id: agent.id, email: agent.email, name: agent.fullName } 
+        });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/auth.controller.js">
+const db = require("../models");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = db.User;
+const Client = db.Client;
+
+exports.register = async (req, res, next) => {
+  try {
+    const { fullName, email, password, role, companyName, mobile } = req.body;
+
+     // Prevent Agents/Admins from self-registering publicly
+    if (role === 'Agent' || role === 'Admin') {
+        return res.status(403).json({ 
+            message: "Restricted role. Agents must be added by an Administrator." 
+        });
+    }
+    
+    // Check existing
+    const exists = await User.findOne({ where: { email } });
+    if (exists) return res.status(400).json({ message: "Email already exists" });
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const t = await db.sequelize.transaction();
+    try {
+        const user = await User.create({
+            fullName, email, password: hashedPassword, role, mobile,
+            status: 'Pending Approval' // Gated Access
+        }, { transaction: t });
+
+        if (role === 'Client') {
+            await Client.create({ userId: user.id, companyName }, { transaction: t });
+        }
+
+        await t.commit();
+        res.status(201).json({ message: "Registration successful. Please wait for Admin approval." });
+    } catch (err) {
+        await t.rollback();
+        throw err;
+    }
+  } catch (error) { next(error); }
+};
+
+exports.login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ where: { email } });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Gatekeeper Check
+    if (user.status !== 'Active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Contact Admin.` });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, user: { id: user.id, name: user.fullName, role: user.role } });
+  } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/client.controller.js">
+const db = require("../models");
+const { encrypt, decrypt } = require("../services/crypto.service");
+const Client = db.Client;
+
+exports.getMyProfile = async (req, res, next) => {
+    try {
+        const profile = await Client.findOne({ where: { userId: req.user.id } });
+        if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+        // Decrypt vault before sending
+        if (profile.technicalVault) {
+            profile.technicalVault = decrypt(profile.technicalVault);
+        }
+        res.json(profile);
+    } catch (error) { next(error); }
+};
+
+exports.updateProfile = async (req, res, next) => {
+    try {
+        const { industry, websiteUrl, technicalVault } = req.body;
+        const updateData = { industry, websiteUrl };
+        
+        // Encrypt vault if provided
+        if (technicalVault) {
+            updateData.technicalVault = encrypt(technicalVault);
+        }
+
+        await Client.update(updateData, { where: { userId: req.user.id } });
+        res.json({ message: "Profile Updated" });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/project.controller.js">
+const db = require("../models");
+const Project = db.Project;
+const ProjectAsset = db.ProjectAsset;
+
+// List Projects (Filtered by Role)
+exports.getProjects = async (req, res, next) => {
+    try {
+        let where = {};
+        if (req.user.role === 'Client') {
+            where.clientId = req.user.ClientProfile?.id; 
+            // Note: Ensure User->Client association is loaded or use req.user.ClientProfile.id logic
+        } else if (req.user.role === 'Agent') {
+            where.agentId = req.user.id;
+        }
+        
+        // If Admin, empty where clause (sees all)
+
+        const projects = await Project.findAll({ 
+            where,
+            include: ['Client', 'Request', 'Agent'] 
+        });
+        res.json(projects);
+    } catch (error) { next(error); }
+};
+
+// Update Project Status
+exports.updateProjectStatus = async (req, res, next) => {
+    try {
+        // Add logic to check if user owns project if needed
+        await Project.update(req.body, { where: { id: req.params.id } });
+        res.json({ message: "Project Updated" });
+    } catch (error) { next(error); }
+};
+
+// Upload Asset
+exports.uploadAsset = async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+        const projectId = req.params.id;
+        const type = req.query.type || 'ClientAsset'; // 'ClientAsset' or 'Deliverable'
+
+        const asset = await ProjectAsset.create({
+            projectId,
+            filePath: req.file.path,
+            fileName: req.file.originalname,
+            type
+        });
+
+        res.status(201).json(asset);
+    } catch (error) { next(error); }
+};
+
+// Get Assets
+exports.getAssets = async (req, res, next) => {
+    try {
+        const assets = await ProjectAsset.findAll({ 
+            where: { projectId: req.params.id } 
+        });
+        res.json(assets);
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/proposal.controller.js">
+const db = require("../models");
+const { generateProposalPDF } = require("../services/pdf.service"); 
+const { sendProposalEmail } = require("../services/email.service"); 
+const Proposal = db.Proposal;
+const ProposalLineItem = db.ProposalLineItem;
+const ServiceRequest = db.ServiceRequest;
+const Project = db.Project;
+const Client = db.Client; // Needed for client name
+
+exports.createProposal = async (req, res, next) => {
+    try {
+        const { requestId, items } = req.body; // items = [{ description, price }]
+        
+        // Calculate Total
+        const totalAmount = items.reduce((sum, item) => sum + Number(item.price), 0);
+
+        const t = await db.sequelize.transaction();
+        try {
+            // 1. Create Proposal Record
+            const proposal = await Proposal.create({
+                requestId,
+                agentId: req.user.id,
+                totalAmount,
+                pdfPath: "pending..." // Temporary
+            }, { transaction: t });
+
+            // 2. Create Line Items
+            const lineItems = items.map(i => ({ ...i, proposalId: proposal.id }));
+            await ProposalLineItem.bulkCreate(lineItems, { transaction: t });
+
+            // 3. Update Request Status
+            await ServiceRequest.update({ status: 'Quoted' }, { where: { id: requestId }, transaction: t });
+
+            // 4. Generate PDF
+            // Fetch Client Name for PDF
+            const requestData = await ServiceRequest.findByPk(requestId, { include: ['Client'] });
+            const clientName = requestData?.Client?.companyName || "Valued Client";
+
+            const pdfPath = await generateProposalPDF(proposal.id, clientName, items, totalAmount);
+            
+            // Update PDF Path
+            proposal.pdfPath = pdfPath;
+            await proposal.save({ transaction: t });
+
+            await t.commit();
+            res.status(201).json(proposal);
+        } catch (err) { await t.rollback(); throw err; }
+    } catch (error) { next(error); }
+};
+
+exports.sendProposal = async (req, res, next) => {
+    try {
+        const proposalId = req.params.id;
+
+        // Fetch proposal with Client info
+        const proposal = await db.Proposal.findByPk(proposalId, {
+            include: [
+                { 
+                    model: db.ServiceRequest, 
+                    as: 'Request',
+                    include: [{ model: db.Client, as: 'Client', include: ['User'] }] 
+                }
+            ]
+        });
+
+        if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+        if (!proposal.pdfPath) return res.status(400).json({ message: "PDF not generated yet" });
+
+        const clientUser = proposal.Request.Client.User;
+        const clientName = clientUser.fullName;
+        const clientEmail = clientUser.email;
+
+        // Send Email
+        await sendProposalEmail(clientEmail, clientName, proposal.id, proposal.pdfPath);
+
+        // Update status to 'Sent' if it was Draft
+        if (proposal.status === 'Draft') {
+            await proposal.update({ status: 'Sent' });
+        }
+
+        res.json({ message: `Proposal sent to ${clientEmail}` });
+    } catch (error) { next(error); }
+};
+
+// ... keep acceptProposal as is
+exports.acceptProposal = async (req, res, next) => {
+    // ... (Your existing code for acceptProposal)
+    try {
+        const proposal = await Proposal.findByPk(req.params.id, {
+            include: [{ model: ServiceRequest, as: 'Request' }]
+        });
+
+        if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+
+        const t = await db.sequelize.transaction();
+        try {
+            // Update Proposal
+            await proposal.update({ status: 'Accepted' }, { transaction: t });
+            
+            // Update Request
+            await ServiceRequest.update({ status: 'Converted' }, { where: { id: proposal.requestId }, transaction: t });
+
+            // CREATE PROJECT
+            const project = await Project.create({
+                requestId: proposal.requestId,
+                clientId: proposal.Request.clientId,
+                agentId: proposal.AgentId || req.user.id, // Fallback logic needed if AgentId isn't loaded
+                globalStatus: 'Pending'
+            }, { transaction: t });
+
+            await t.commit();
+            res.json({ message: "Proposal Accepted & Project Started", projectId: project.id });
+        } catch (err) { await t.rollback(); throw err; }
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/controllers/request.controller.js">
+const db = require("../models");
+const ServiceRequest = db.ServiceRequest;
+
+exports.createRequest = async (req, res, next) => {
+    try {
+        const client = await db.Client.findOne({ where: { userId: req.user.id } });
+        if (!client) return res.status(404).json({ message: "Client profile missing" });
+
+        const request = await ServiceRequest.create({
+            clientId: client.id,
+            categoryId: req.body.categoryId,
+            details: req.body.details,
+            priority: req.body.priority
+        });
+        res.status(201).json(request);
+    } catch (error) { next(error); }
+};
+
+exports.getRequests = async (req, res, next) => {
+    try {
+        let where = {};
+        if (req.user.role === 'Client') {
+            const client = await db.Client.findOne({ where: { userId: req.user.id } });
+            where.clientId = client.id;
+        } else if (req.user.role === 'Agent') {
+            where.agentId = req.user.id;
+        } else if (req.user.role === 'Admin') {
+            where.status = 'Pending Triage'; // Admin triage view
+        }
+
+        const requests = await ServiceRequest.findAll({ 
+            where, 
+            include: ['Client', 'Category', 'AssignedAgent'] 
+        });
+        res.json(requests);
+    } catch (error) { next(error); }
+};
+
+exports.assignRequest = async (req, res, next) => {
+    try {
+        const { agentId } = req.body;
+        await ServiceRequest.update(
+            { agentId, status: 'Assigned' },
+            { where: { id: req.params.id } }
+        );
+        res.json({ message: "Agent Assigned" });
+    } catch (error) { next(error); }
+};
+</file>
+
+<file path="src/middleware/auth.middleware.js">
+const jwt = require("jsonwebtoken");
+const { User } = require("../models");
+
+exports.protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (!token) return res.status(401).json({ message: "Not authorized to access this route" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decoded.id);
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Gatekeeper: Check Status
+    if (user.status !== 'Active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Access Denied.` });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Not authorized, token failed" });
+  }
+};
+
+exports.authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: `Role ${req.user.role} is not authorized` });
+    }
+    next();
+  };
+};
+</file>
+
+<file path="src/middleware/error.middleware.js">
+const errorMiddleware = (err, req, res, next) => {
+    console.error(`❌ Error: ${err.message}`);
+    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+    res.status(statusCode).json({
+        message: err.message,
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+    });
+};
+
+module.exports = { errorMiddleware };
+</file>
+
+<file path="src/middleware/upload.middleware.js">
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// Ensure directories exist
+const createDir = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    let uploadPath = "uploads/assets"; // Default
+    // You can segregate based on route or type if needed
+    createDir(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    // timestamp-filename.ext
+    cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`);
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|pdf|zip|rar|doc|docx/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error("Error: File type not supported!"));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: fileFilter,
+});
+
+module.exports = upload;
+</file>
+
+<file path="src/models/Client.js">
+module.exports = (sequelize, DataTypes) => {
+    const Client = sequelize.define('Client', {
+        id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+        companyName: { type: DataTypes.STRING },
+        industry: { type: DataTypes.STRING },
+        websiteUrl: { type: DataTypes.STRING },
+        technicalVault: { type: DataTypes.TEXT } // Stores Encrypted String
+    });
+
+    Client.associate = (models) => {
+        Client.belongsTo(models.User, { foreignKey: 'userId', as: 'User' });
+        Client.hasMany(models.ServiceRequest, { foreignKey: 'clientId', as: 'Requests' });
+        Client.hasMany(models.Project, { foreignKey: 'clientId', as: 'Projects' });
+    };
+    return Client;
+};
+</file>
+
+<file path="src/models/index.js">
+const fs = require('fs');
+const path = require('path');
+const Sequelize = require('sequelize');
+const basename = path.basename(__filename);
+const env = process.env.NODE_ENV || 'development';
+const config = require('../config/database')[env];
+const db = {};
+
+let sequelize;
+if (config.use_env_variable) {
+  sequelize = new Sequelize(process.env[config.use_env_variable], config);
+} else {
+  sequelize = new Sequelize(config.database, config.username, config.password, config);
+}
+
+fs
+  .readdirSync(__dirname)
+  .filter(file => {
+    return (file.indexOf('.') !== 0) && (file !== basename) && (file.slice(-3) === '.js');
+  })
+  .forEach(file => {
+    const model = require(path.join(__dirname, file))(sequelize, Sequelize.DataTypes);
+    db[model.name] = model;
+  });
+
+Object.keys(db).forEach(modelName => {
+  if (db[modelName].associate) {
+    db[modelName].associate(db);
+  }
+});
+
+db.sequelize = sequelize;
+db.Sequelize = Sequelize;
+
+module.exports = db;
+</file>
+
+<file path="src/models/Project.js">
+module.exports = (sequelize, DataTypes) => {
+    const Project = sequelize.define('Project', {
+        globalStatus: { 
+            type: DataTypes.ENUM('Pending', 'In Progress', 'Testing', 'Delivered'),
+            defaultValue: 'Pending' 
+        },
+        progressPercent: { type: DataTypes.INTEGER, defaultValue: 0 },
+        ecd: { type: DataTypes.DATEONLY }, // Estimated Completion Date
+    });
+
+    Project.associate = (models) => {
+        Project.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
+        Project.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
+        Project.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
+        Project.hasMany(models.ProjectAsset, { foreignKey: 'projectId', as: 'Assets' });
+    };
+    return Project;
+};
+</file>
+
+<file path="src/models/ProjectAsset.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProjectAsset = sequelize.define('ProjectAsset', {
+        filePath: { type: DataTypes.STRING, allowNull: false },
+        fileName: { type: DataTypes.STRING },
+        type: { type: DataTypes.ENUM('ClientAsset', 'Deliverable'), defaultValue: 'ClientAsset' }
+    });
+    ProjectAsset.associate = (models) => {
+        ProjectAsset.belongsTo(models.Project, { foreignKey: 'projectId' });
+    };
+    return ProjectAsset;
+};
+</file>
+
+<file path="src/models/Proposal.js">
+module.exports = (sequelize, DataTypes) => {
+    const Proposal = sequelize.define('Proposal', {
+        status: { 
+            type: DataTypes.ENUM('Draft', 'Sent', 'Accepted', 'Rejected'),
+            defaultValue: 'Draft' 
+        },
+        totalAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0.00 },
+        pdfPath: { type: DataTypes.STRING }
+    });
+
+    Proposal.associate = (models) => {
+        Proposal.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
+        Proposal.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
+        Proposal.hasMany(models.ProposalLineItem, { foreignKey: 'proposalId', as: 'Items' });
+    };
+    return Proposal;
+};
+</file>
+
+<file path="src/models/ProposalLineItem.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProposalLineItem = sequelize.define('ProposalLineItem', {
+        description: { type: DataTypes.STRING, allowNull: false },
+        price: { type: DataTypes.DECIMAL(10, 2), allowNull: false }
+    });
+    ProposalLineItem.associate = (models) => {
+        ProposalLineItem.belongsTo(models.Proposal, { foreignKey: 'proposalId' });
+    };
+    return ProposalLineItem;
+};
+</file>
+
+<file path="src/models/ServiceCategory.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceCategory = sequelize.define('ServiceCategory', {
+        name: { type: DataTypes.STRING, allowNull: false, unique: true },
+        description: { type: DataTypes.TEXT }
+    });
+    return ServiceCategory;
+};
+</file>
+
+<file path="src/models/ServiceRequest.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceRequest = sequelize.define('ServiceRequest', {
+        details: { type: DataTypes.TEXT, allowNull: false },
+        priority: { type: DataTypes.ENUM('Low', 'Medium', 'High'), defaultValue: 'Medium' },
+        status: { 
+            type: DataTypes.ENUM('Pending Triage', 'Assigned', 'Quoted', 'Converted', 'Rejected'),
+            defaultValue: 'Pending Triage' 
+        }
+    });
+
+    ServiceRequest.associate = (models) => {
+        ServiceRequest.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
+        ServiceRequest.belongsTo(models.User, { foreignKey: 'agentId', as: 'AssignedAgent' });
+        ServiceRequest.belongsTo(models.ServiceCategory, { foreignKey: 'categoryId', as: 'Category' });
+        ServiceRequest.hasOne(models.Proposal, { foreignKey: 'requestId', as: 'Proposal' });
+    };
+    return ServiceRequest;
+};
+</file>
+
+<file path="src/models/User.js">
+module.exports = (sequelize, DataTypes) => {
+  const User = sequelize.define("User", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    fullName: { type: DataTypes.STRING, allowNull: false },
+    email: { type: DataTypes.STRING, allowNull: false, unique: true, validate: { isEmail: true } },
+    password: { type: DataTypes.STRING, allowNull: false },
+    role: { type: DataTypes.ENUM("Admin", "Agent", "Client"), allowNull: false },
+    mobile: { type: DataTypes.STRING },
+    status: { 
+        type: DataTypes.ENUM('Pending Approval', 'Active', 'Rejected'),
+        defaultValue: 'Pending Approval' 
+    }
+  });
+
+  User.associate = (models) => {
+    User.hasOne(models.Client, { foreignKey: "userId", as: "ClientProfile" });
+    User.hasMany(models.ServiceRequest, { foreignKey: 'agentId', as: 'AssignedRequests' });
+    User.hasMany(models.Project, { foreignKey: 'agentId', as: 'ManagedProjects' });
+  };
+  return User;
+};
+</file>
+
+<file path="src/services/crypto.service.js">
+const crypto = require('crypto');
+const algorithm = 'aes-256-ctr';
+
+// Ensure this key is exactly 32 chars in .env, or we hash it to force 32 bytes
+const getKey = () => crypto.createHash('sha256').update(String(process.env.VAULT_SECRET)).digest('base64').substr(0, 32);
+
+exports.encrypt = (text) => {
+    if (!text) return null;
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(algorithm, getKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+};
+
+exports.decrypt = (hash) => {
+    if (!hash) return null;
+    const parts = hash.split(':');
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encryptedText = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv(algorithm, getKey(), iv);
+    const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
+    return decrypted.toString();
+};
+</file>
+
+<file path="src/services/email.service.js">
+const nodemailer = require("nodemailer");
+const path = require("path");
+const fs = require("fs");
+
+// Create Transporter
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// Generic Send Function
+const sendEmail = async (to, subject, html, attachments = []) => {
+  try {
+    const info = await transporter.sendMail({
+      from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL}>`,
+      to,
+      subject,
+      html,
+      attachments,
+    });
+    console.log("Message sent: %s", info.messageId);
+    return info;
+  } catch (error) {
+    console.error("Error sending email:", error);
+    throw new Error("Email service failed");
+  }
+};
+
+// 1. Account Approval Email
+exports.sendAccountApproval = async (email, name) => {
+  const subject = "Your BizTech Account is Approved!";
+  const html = `
+    <h3>Hello ${name},</h3>
+    <p>Great news! Your account has been approved by our administrators.</p>
+    <p>You can now login to your dashboard to view services and submit requests.</p>
+    <br>
+    <p>Regards,<br>BizTech Team</p>
+  `;
+  return sendEmail(email, subject, html);
+};
+
+// 2. Send Proposal PDF
+exports.sendProposalEmail = async (clientEmail, clientName, proposalId, pdfRelativePath) => {
+  const subject = `Project Proposal #${proposalId} - Digitize Your Biz`;
+  const html = `
+    <h3>Hello ${clientName},</h3>
+    <p>Please find attached the proposal for your requested services.</p>
+    <p>You can review and accept this proposal directly from your dashboard.</p>
+    <br>
+    <p>Regards,<br>BizTech Team</p>
+  `;
+
+  // Resolve full path for attachment
+  const fullPath = path.join(__dirname, "../../", pdfRelativePath);
+
+  if (!fs.existsSync(fullPath)) {
+    throw new Error("Proposal PDF file not found");
+  }
+
+  const attachments = [
+    {
+      filename: `Proposal-${proposalId}.pdf`,
+      path: fullPath,
+    },
+  ];
+
+  return sendEmail(clientEmail, subject, html, attachments);
+};
+
+// Export generic if needed elsewhere
+exports.sendEmail = sendEmail;
+</file>
+
+<file path="src/services/pdf.service.js">
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
+
+exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument();
+      const fileName = `proposal-${proposalId}-${Date.now()}.pdf`;
+      const uploadDir = path.join(__dirname, "../../uploads/proposals");
+      
+      // Ensure directory exists
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      const filePath = path.join(uploadDir, fileName);
+      const writeStream = fs.createWriteStream(filePath);
+
+      doc.pipe(writeStream);
+
+      // Header
+      doc.fontSize(25).text("Digitize Your Biz", { align: "center" });
+      doc.moveDown();
+      doc.fontSize(18).text("Project Proposal", { align: "center" });
+      doc.moveDown();
+
+      // Client Info
+      doc.fontSize(12).text(`Client: ${clientName}`);
+      doc.text(`Date: ${new Date().toLocaleDateString()}`);
+      doc.moveDown();
+
+      // Line Items
+      doc.text("Services Included:", { underline: true });
+      doc.moveDown(0.5);
+
+      items.forEach((item) => {
+        doc.text(`- ${item.description}: $${item.price}`);
+      });
+
+      doc.moveDown();
+      doc.fontSize(14).text(`Total Amount: $${totalAmount}`, { bold: true });
+
+      doc.end();
+
+      writeStream.on("finish", () => {
+        // Return relative path for DB storage
+        resolve(`uploads/proposals/${fileName}`);
+      });
+
+      writeStream.on("error", (err) => {
+        reject(err);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+</file>
+
+</files>

@@ -4,7 +4,6 @@ const User = db.User;
 const ServiceCategory = db.ServiceCategory;
 const { sendAccountApproval } = require('../services/email.service');
 
-
 exports.getPendingUsers = async (req, res, next) => {
     try {
         const users = await User.findAll({ where: { status: 'Pending Approval' } });
@@ -15,13 +14,22 @@ exports.getPendingUsers = async (req, res, next) => {
 exports.updateUserStatus = async (req, res, next) => {
     try {
         const { status } = req.body; 
-        const user = await User.findByPk(req.params.id); 
+        const userId = req.params.id;
+
+        const user = await User.findByPk(userId); 
         
-        await User.update({ status }, { where: { id: req.params.id } });
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
         
-        // Send Email using the new service function
-        if (user && status === 'Active') {
-            await sendAccountApproval(user.email, user.fullName);
+        await User.update({ status }, { where: { id: userId } });
+        
+        if (status === 'Active') {
+            try {
+                await sendAccountApproval(user.email, user.fullName);
+            } catch (emailError) {
+                console.warn(`⚠️ Warning: Failed to send approval email. Check SMTP settings.`);
+            }
         }
 
         res.json({ message: `User status updated to ${status}` });
@@ -42,29 +50,35 @@ exports.getCategories = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
+// --- NEW FUNCTION: List All Agents ---
+exports.getAgents = async (req, res, next) => {
+    try {
+        const agents = await User.findAll({ 
+            where: { role: 'Agent' },
+            attributes: { exclude: ['password'] } // Security: Don't send passwords
+        });
+        res.json(agents);
+    } catch (error) { next(error); }
+};
+
 exports.createAgent = async (req, res, next) => {
     try {
         const { fullName, email, password, mobile } = req.body;
 
-        // Check if user exists
         const exists = await User.findOne({ where: { email } });
         if (exists) return res.status(400).json({ message: "Email already exists" });
 
-        // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Create Agent immediately as 'Active'
         const agent = await User.create({
             fullName,
             email,
             password: hashedPassword,
             role: 'Agent',
             mobile,
-            status: 'Active' // No approval needed since Admin created it
+            status: 'Active'
         });
-
-        // Optional: Send email to Agent with credentials here
 
         res.status(201).json({ 
             message: "Agent created successfully.", 

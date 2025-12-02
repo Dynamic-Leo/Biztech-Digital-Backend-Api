@@ -1,7 +1,14 @@
 const express = require('express');
 const router = express.Router();
-// Import the new function
-const { getPendingUsers, updateUserStatus, createCategory, getCategories, createAgent } = require('../controllers/admin.controller');
+// IMPORTANT: Added getAgents to the import list
+const { 
+    getPendingUsers, 
+    updateUserStatus, 
+    createCategory, 
+    getCategories, 
+    createAgent, 
+    getAgents 
+} = require('../controllers/admin.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
 router.use(protect);
@@ -14,7 +21,8 @@ router.patch('/users/:id/status', authorize('Admin'), updateUserStatus);
 router.post('/categories', authorize('Admin'), createCategory);
 router.get('/categories', getCategories);
 
-// --- NEW ROUTE: Create Agent ---
+// Agent Routes
 router.post('/agents', authorize('Admin'), createAgent);
+router.get('/agents', authorize('Admin'), getAgents); // This fixes the 404 error
 
 module.exports = router;
