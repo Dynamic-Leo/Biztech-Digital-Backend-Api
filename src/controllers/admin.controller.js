@@ -50,12 +50,41 @@ exports.getCategories = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-// --- NEW FUNCTION: List All Agents ---
+// --- NEW: Update Category ---
+exports.updateCategory = async (req, res, next) => {
+    try {
+        const { name, description } = req.body;
+        const category = await ServiceCategory.findByPk(req.params.id);
+        
+        if (!category) return res.status(404).json({ message: "Category not found" });
+
+        await category.update({ name, description });
+        res.json({ message: "Category updated successfully", category });
+    } catch (error) { next(error); }
+};
+
+// --- NEW: Delete Category ---
+exports.deleteCategory = async (req, res, next) => {
+    try {
+        const category = await ServiceCategory.findByPk(req.params.id);
+        if (!category) return res.status(404).json({ message: "Category not found" });
+
+        await category.destroy();
+        res.json({ message: "Category deleted successfully" });
+    } catch (error) { 
+        // Handle Foreign Key constraint errors (if category is used in requests)
+        if (error.name === 'SequelizeForeignKeyConstraintError') {
+            return res.status(400).json({ message: "Cannot delete this service because it is currently assigned to existing client requests." });
+        }
+        next(error); 
+    }
+};
+
 exports.getAgents = async (req, res, next) => {
     try {
         const agents = await User.findAll({ 
             where: { role: 'Agent' },
-            attributes: { exclude: ['password'] } // Security: Don't send passwords
+            attributes: { exclude: ['password'] } 
         });
         res.json(agents);
     } catch (error) { next(error); }
