@@ -30,7 +30,7 @@ exports.getRequests = async (req, res, next) => {
 
         const requests = await ServiceRequest.findAll({ 
             where, 
-            include: ['Client', 'Category', 'AssignedAgent'] 
+            include: ['Client', 'Category', 'AssignedAgent', 'Proposal'] // Added Proposal to include
         });
         res.json(requests);
     } catch (error) { next(error); }

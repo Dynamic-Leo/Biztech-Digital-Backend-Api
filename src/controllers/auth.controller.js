@@ -61,3 +61,38 @@ exports.login = async (req, res, next) => {
     res.json({ token, user: { id: user.id, name: user.fullName, role: user.role } });
   } catch (error) { next(error); }
 };
+
+// --- NEW: Get Current User Info ---
+exports.getMe = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.user.id, {
+            attributes: { exclude: ['password'] }
+        });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        res.json(user);
+    } catch (error) { next(error); }
+};
+
+// --- NEW: Update Current User Info ---
+exports.updateMe = async (req, res, next) => {
+    try {
+        const { fullName, mobile, password } = req.body;
+        const user = await User.findByPk(req.user.id);
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (fullName) user.fullName = fullName;
+        if (mobile) user.mobile = mobile;
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(password, salt);
+        }
+
+        await user.save();
+        
+        res.json({ 
+            message: "Profile updated successfully", 
+            user: { id: user.id, name: user.fullName, email: user.email, role: user.role } 
+        });
+    } catch (error) { next(error); }
+};

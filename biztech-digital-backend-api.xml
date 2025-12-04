@@ -471,10 +471,15 @@ expand\_less
 <file path="src/api/auth.routes.js">
 const express = require('express');
 const router = express.Router();
-const { register, login } = require('../controllers/auth.controller');
+const { register, login, getMe, updateMe } = require('../controllers/auth.controller');
+const { protect } = require('../middleware/auth.middleware');
 
 router.post('/register', register);
 router.post('/login', login);
+
+// --- NEW ROUTES ---
+router.get('/me', protect, getMe);
+router.put('/me', protect, updateMe);
 
 module.exports = router;
 </file>
@@ -482,11 +487,14 @@ module.exports = router;
 <file path="src/api/client.routes.js">
 const express = require('express');
 const router = express.Router();
-const { getMyProfile, updateProfile } = require('../controllers/client.controller');
+const { getMyProfile, updateProfile, getAgentClients } = require('../controllers/client.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
 router.get('/me', protect, authorize('Client'), getMyProfile);
 router.put('/me', protect, authorize('Client'), updateProfile);
+
+// --- NEW: Route for Agents to view their clients ---
+router.get('/agent-list', protect, authorize('Agent'), getAgentClients);
 
 module.exports = router;
 </file>
@@ -629,12 +637,49 @@ exports.login = async (req, res, next) => {
     res.json({ token, user: { id: user.id, name: user.fullName, role: user.role } });
   } catch (error) { next(error); }
 };
+
+// --- NEW: Get Current User Info ---
+exports.getMe = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.user.id, {
+            attributes: { exclude: ['password'] }
+        });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        res.json(user);
+    } catch (error) { next(error); }
+};
+
+// --- NEW: Update Current User Info ---
+exports.updateMe = async (req, res, next) => {
+    try {
+        const { fullName, mobile, password } = req.body;
+        const user = await User.findByPk(req.user.id);
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (fullName) user.fullName = fullName;
+        if (mobile) user.mobile = mobile;
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(password, salt);
+        }
+
+        await user.save();
+        
+        res.json({ 
+            message: "Profile updated successfully", 
+            user: { id: user.id, name: user.fullName, email: user.email, role: user.role } 
+        });
+    } catch (error) { next(error); }
+};
 </file>
 
 <file path="src/controllers/client.controller.js">
 const db = require("../models");
 const { encrypt, decrypt } = require("../services/crypto.service");
 const Client = db.Client;
+const Project = db.Project;
+const User = db.User;
 
 exports.getMyProfile = async (req, res, next) => {
     try {
@@ -661,6 +706,42 @@ exports.updateProfile = async (req, res, next) => {
 
         await Client.update(updateData, { where: { userId: req.user.id } });
         res.json({ message: "Profile Updated" });
+    } catch (error) { next(error); }
+};
+
+// --- NEW: Get Clients assigned to an Agent ---
+exports.getAgentClients = async (req, res, next) => {
+    try {
+        // Find clients that have projects assigned to this agent
+        const clients = await Client.findAll({
+            include: [
+                { 
+                    model: User, 
+                    as: 'User',
+                    attributes: ['fullName', 'email'] 
+                },
+                {
+                    model: Project,
+                    as: 'Projects',
+                    where: { agentId: req.user.id }, // Filter by Agent
+                    attributes: ['id', 'globalStatus']
+                }
+            ]
+        });
+
+        // Format data for frontend
+        const formattedClients = clients.map(c => ({
+            id: c.id,
+            name: c.User.fullName,
+            email: c.User.email,
+            company: c.companyName,
+            industry: c.industry,
+            projectsCount: c.Projects.length,
+            activeProjects: c.Projects.filter(p => p.globalStatus === 'In Progress').length,
+            joinedDate: c.createdAt
+        }));
+
+        res.json(formattedClients);
     } catch (error) { next(error); }
 };
 </file>
@@ -881,7 +962,7 @@ exports.getRequests = async (req, res, next) => {
 
         const requests = await ServiceRequest.findAll({ 
             where, 
-            include: ['Client', 'Category', 'AssignedAgent'] 
+            include: ['Client', 'Category', 'AssignedAgent', 'Proposal'] // Added Proposal to include
         });
         res.json(requests);
     } catch (error) { next(error); }
@@ -1347,12 +1428,13 @@ exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
 <file path="src/api/admin.routes.js">
 const express = require('express');
 const router = express.Router();
-// IMPORTANT: Added getAgents to the import list
 const { 
     getPendingUsers, 
     updateUserStatus, 
     createCategory, 
     getCategories, 
+    updateCategory, // Added
+    deleteCategory, // Added
     createAgent, 
     getAgents 
 } = require('../controllers/admin.controller');
@@ -1367,10 +1449,12 @@ router.patch('/users/:id/status', authorize('Admin'), updateUserStatus);
 // Category Routes
 router.post('/categories', authorize('Admin'), createCategory);
 router.get('/categories', getCategories);
+router.put('/categories/:id', authorize('Admin'), updateCategory); // Added
+router.delete('/categories/:id', authorize('Admin'), deleteCategory); // Added
 
 // Agent Routes
 router.post('/agents', authorize('Admin'), createAgent);
-router.get('/agents', authorize('Admin'), getAgents); // This fixes the 404 error
+router.get('/agents', authorize('Admin'), getAgents);
 
 module.exports = router;
 </file>
@@ -1428,12 +1512,41 @@ exports.getCategories = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-// --- NEW FUNCTION: List All Agents ---
+// --- NEW: Update Category ---
+exports.updateCategory = async (req, res, next) => {
+    try {
+        const { name, description } = req.body;
+        const category = await ServiceCategory.findByPk(req.params.id);
+        
+        if (!category) return res.status(404).json({ message: "Category not found" });
+
+        await category.update({ name, description });
+        res.json({ message: "Category updated successfully", category });
+    } catch (error) { next(error); }
+};
+
+// --- NEW: Delete Category ---
+exports.deleteCategory = async (req, res, next) => {
+    try {
+        const category = await ServiceCategory.findByPk(req.params.id);
+        if (!category) return res.status(404).json({ message: "Category not found" });
+
+        await category.destroy();
+        res.json({ message: "Category deleted successfully" });
+    } catch (error) { 
+        // Handle Foreign Key constraint errors (if category is used in requests)
+        if (error.name === 'SequelizeForeignKeyConstraintError') {
+            return res.status(400).json({ message: "Cannot delete this service because it is currently assigned to existing client requests." });
+        }
+        next(error); 
+    }
+};
+
 exports.getAgents = async (req, res, next) => {
     try {
         const agents = await User.findAll({ 
             where: { role: 'Agent' },
-            attributes: { exclude: ['password'] } // Security: Don't send passwords
+            attributes: { exclude: ['password'] } 
         });
         res.json(agents);
     } catch (error) { next(error); }

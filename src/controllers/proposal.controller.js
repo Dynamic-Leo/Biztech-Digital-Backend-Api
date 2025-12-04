@@ -5,34 +5,37 @@ const Proposal = db.Proposal;
 const ProposalLineItem = db.ProposalLineItem;
 const ServiceRequest = db.ServiceRequest;
 const Project = db.Project;
-const Client = db.Client; // Needed for client name
+const Client = db.Client;
 
 exports.createProposal = async (req, res, next) => {
     try {
-        const { requestId, items } = req.body; // items = [{ description, price }]
+        const { requestId, items } = req.body; 
         
         // Calculate Total
         const totalAmount = items.reduce((sum, item) => sum + Number(item.price), 0);
 
         const t = await db.sequelize.transaction();
         try {
-            // 1. Create Proposal Record
+            // Check if proposal exists and delete old one (to allow Re-create)
+            await Proposal.destroy({ where: { requestId }, transaction: t });
+
+            // 1. Create Proposal Record (Status: Draft)
             const proposal = await Proposal.create({
                 requestId,
                 agentId: req.user.id,
                 totalAmount,
-                pdfPath: "pending..." // Temporary
+                status: 'Draft', // Explicitly Draft
+                pdfPath: "pending..." 
             }, { transaction: t });
 
             // 2. Create Line Items
             const lineItems = items.map(i => ({ ...i, proposalId: proposal.id }));
             await ProposalLineItem.bulkCreate(lineItems, { transaction: t });
 
-            // 3. Update Request Status
-            await ServiceRequest.update({ status: 'Quoted' }, { where: { id: requestId }, transaction: t });
+            // NOTE: We do NOT update ServiceRequest status to 'Quoted' yet. 
+            // It remains 'Assigned' until the agent clicks "Send".
 
-            // 4. Generate PDF
-            // Fetch Client Name for PDF
+            // 3. Generate PDF
             const requestData = await ServiceRequest.findByPk(requestId, { include: ['Client'] });
             const clientName = requestData?.Client?.companyName || "Valued Client";
 
@@ -73,18 +76,25 @@ exports.sendProposal = async (req, res, next) => {
         // Send Email
         await sendProposalEmail(clientEmail, clientName, proposal.id, proposal.pdfPath);
 
-        // Update status to 'Sent' if it was Draft
-        if (proposal.status === 'Draft') {
-            await proposal.update({ status: 'Sent' });
-        }
+        const t = await db.sequelize.transaction();
+        try {
+            // 1. Update Proposal Status
+            await proposal.update({ status: 'Sent' }, { transaction: t });
 
-        res.json({ message: `Proposal sent to ${clientEmail}` });
+            // 2. Update Request Status to 'Quoted' (This triggers the Client Dashboard view)
+            await ServiceRequest.update(
+                { status: 'Quoted' }, 
+                { where: { id: proposal.requestId }, transaction: t }
+            );
+
+            await t.commit();
+            res.json({ message: `Proposal sent to ${clientEmail} and Dashboard updated.` });
+        } catch (err) { await t.rollback(); throw err; }
+
     } catch (error) { next(error); }
 };
 
-// ... keep acceptProposal as is
 exports.acceptProposal = async (req, res, next) => {
-    // ... (Your existing code for acceptProposal)
     try {
         const proposal = await Proposal.findByPk(req.params.id, {
             include: [{ model: ServiceRequest, as: 'Request' }]
@@ -104,7 +114,7 @@ exports.acceptProposal = async (req, res, next) => {
             const project = await Project.create({
                 requestId: proposal.requestId,
                 clientId: proposal.Request.clientId,
-                agentId: proposal.AgentId || req.user.id, // Fallback logic needed if AgentId isn't loaded
+                agentId: proposal.Request.agentId || req.user.id, 
                 globalStatus: 'Pending'
             }, { transaction: t });
 
