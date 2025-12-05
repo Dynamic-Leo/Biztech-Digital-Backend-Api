@@ -66,6 +66,7 @@ src/models/Client.js
 src/models/index.js
 src/models/Project.js
 src/models/ProjectAsset.js
+src/models/ProjectNote.js
 src/models/Proposal.js
 src/models/ProposalLineItem.js
 src/models/ServiceCategory.js
@@ -468,58 +469,6 @@ expand\_less
 }
 </file>
 
-<file path="src/api/auth.routes.js">
-const express = require('express');
-const router = express.Router();
-const { register, login, getMe, updateMe } = require('../controllers/auth.controller');
-const { protect } = require('../middleware/auth.middleware');
-
-router.post('/register', register);
-router.post('/login', login);
-
-// --- NEW ROUTES ---
-router.get('/me', protect, getMe);
-router.put('/me', protect, updateMe);
-
-module.exports = router;
-</file>
-
-<file path="src/api/client.routes.js">
-const express = require('express');
-const router = express.Router();
-const { getMyProfile, updateProfile, getAgentClients } = require('../controllers/client.controller');
-const { protect, authorize } = require('../middleware/auth.middleware');
-
-router.get('/me', protect, authorize('Client'), getMyProfile);
-router.put('/me', protect, authorize('Client'), updateProfile);
-
-// --- NEW: Route for Agents to view their clients ---
-router.get('/agent-list', protect, authorize('Agent'), getAgentClients);
-
-module.exports = router;
-</file>
-
-<file path="src/api/project.routes.js">
-const express = require('express');
-const router = express.Router();
-const db = require('../models');
-const { protect } = require('../middleware/auth.middleware');
-
-// List Projects
-router.get('/', protect, async (req, res) => {
-    const projects = await db.Project.findAll({ include: ['Client', 'Request'] });
-    res.json(projects);
-});
-
-// Update Status (Agent)
-router.patch('/:id', protect, async (req, res) => {
-    await db.Project.update(req.body, { where: { id: req.params.id } });
-    res.json({ message: "Project Updated" });
-});
-
-module.exports = router;
-</file>
-
 <file path="src/api/proposal.routes.js">
 const express = require('express');
 const router = express.Router();
@@ -571,6 +520,368 @@ module.exports = {
     logging: false
   }
 };
+</file>
+
+<file path="src/middleware/auth.middleware.js">
+const jwt = require("jsonwebtoken");
+const { User } = require("../models");
+
+exports.protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (!token) return res.status(401).json({ message: "Not authorized to access this route" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decoded.id);
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Gatekeeper: Check Status
+    if (user.status !== 'Active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Access Denied.` });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Not authorized, token failed" });
+  }
+};
+
+exports.authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: `Role ${req.user.role} is not authorized` });
+    }
+    next();
+  };
+};
+</file>
+
+<file path="src/middleware/error.middleware.js">
+const errorMiddleware = (err, req, res, next) => {
+    console.error(`❌ Error: ${err.message}`);
+    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+    res.status(statusCode).json({
+        message: err.message,
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+    });
+};
+
+module.exports = { errorMiddleware };
+</file>
+
+<file path="src/middleware/upload.middleware.js">
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// Ensure directories exist
+const createDir = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    let uploadPath = "uploads/assets"; // Default
+    // You can segregate based on route or type if needed
+    createDir(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    // timestamp-filename.ext
+    cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`);
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|pdf|zip|rar|doc|docx/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error("Error: File type not supported!"));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: fileFilter,
+});
+
+module.exports = upload;
+</file>
+
+<file path="src/models/Client.js">
+module.exports = (sequelize, DataTypes) => {
+    const Client = sequelize.define('Client', {
+        id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+        companyName: { type: DataTypes.STRING },
+        industry: { type: DataTypes.STRING },
+        websiteUrl: { type: DataTypes.STRING },
+        technicalVault: { type: DataTypes.TEXT } // Stores Encrypted String
+    });
+
+    Client.associate = (models) => {
+        Client.belongsTo(models.User, { foreignKey: 'userId', as: 'User' });
+        Client.hasMany(models.ServiceRequest, { foreignKey: 'clientId', as: 'Requests' });
+        Client.hasMany(models.Project, { foreignKey: 'clientId', as: 'Projects' });
+    };
+    return Client;
+};
+</file>
+
+<file path="src/models/index.js">
+const fs = require('fs');
+const path = require('path');
+const Sequelize = require('sequelize');
+const basename = path.basename(__filename);
+const env = process.env.NODE_ENV || 'development';
+const config = require('../config/database')[env];
+const db = {};
+
+let sequelize;
+if (config.use_env_variable) {
+  sequelize = new Sequelize(process.env[config.use_env_variable], config);
+} else {
+  sequelize = new Sequelize(config.database, config.username, config.password, config);
+}
+
+fs
+  .readdirSync(__dirname)
+  .filter(file => {
+    return (file.indexOf('.') !== 0) && (file !== basename) && (file.slice(-3) === '.js');
+  })
+  .forEach(file => {
+    const model = require(path.join(__dirname, file))(sequelize, Sequelize.DataTypes);
+    db[model.name] = model;
+  });
+
+Object.keys(db).forEach(modelName => {
+  if (db[modelName].associate) {
+    db[modelName].associate(db);
+  }
+});
+
+db.sequelize = sequelize;
+db.Sequelize = Sequelize;
+
+module.exports = db;
+</file>
+
+<file path="src/models/ProjectAsset.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProjectAsset = sequelize.define('ProjectAsset', {
+        filePath: { type: DataTypes.STRING, allowNull: false },
+        fileName: { type: DataTypes.STRING },
+        type: { type: DataTypes.ENUM('ClientAsset', 'Deliverable'), defaultValue: 'ClientAsset' }
+    });
+    ProjectAsset.associate = (models) => {
+        ProjectAsset.belongsTo(models.Project, { foreignKey: 'projectId' });
+    };
+    return ProjectAsset;
+};
+</file>
+
+<file path="src/models/ProjectNote.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProjectNote = sequelize.define('ProjectNote', {
+        content: { type: DataTypes.TEXT, allowNull: false }
+    });
+
+    ProjectNote.associate = (models) => {
+        ProjectNote.belongsTo(models.Project, { foreignKey: 'projectId', as: 'Project' });
+        ProjectNote.belongsTo(models.User, { foreignKey: 'userId', as: 'Author' });
+    };
+    return ProjectNote;
+};
+</file>
+
+<file path="src/models/Proposal.js">
+module.exports = (sequelize, DataTypes) => {
+    const Proposal = sequelize.define('Proposal', {
+        status: { 
+            type: DataTypes.ENUM('Draft', 'Sent', 'Accepted', 'Rejected'),
+            defaultValue: 'Draft' 
+        },
+        totalAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0.00 },
+        pdfPath: { type: DataTypes.STRING }
+    });
+
+    Proposal.associate = (models) => {
+        Proposal.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
+        Proposal.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
+        Proposal.hasMany(models.ProposalLineItem, { foreignKey: 'proposalId', as: 'Items' });
+    };
+    return Proposal;
+};
+</file>
+
+<file path="src/models/ProposalLineItem.js">
+module.exports = (sequelize, DataTypes) => {
+    const ProposalLineItem = sequelize.define('ProposalLineItem', {
+        description: { type: DataTypes.STRING, allowNull: false },
+        price: { type: DataTypes.DECIMAL(10, 2), allowNull: false }
+    });
+    ProposalLineItem.associate = (models) => {
+        ProposalLineItem.belongsTo(models.Proposal, { foreignKey: 'proposalId' });
+    };
+    return ProposalLineItem;
+};
+</file>
+
+<file path="src/models/ServiceCategory.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceCategory = sequelize.define('ServiceCategory', {
+        name: { type: DataTypes.STRING, allowNull: false, unique: true },
+        description: { type: DataTypes.TEXT }
+    });
+    return ServiceCategory;
+};
+</file>
+
+<file path="src/models/ServiceRequest.js">
+module.exports = (sequelize, DataTypes) => {
+    const ServiceRequest = sequelize.define('ServiceRequest', {
+        details: { type: DataTypes.TEXT, allowNull: false },
+        priority: { type: DataTypes.ENUM('Low', 'Medium', 'High'), defaultValue: 'Medium' },
+        status: { 
+            type: DataTypes.ENUM('Pending Triage', 'Assigned', 'Quoted', 'Converted', 'Rejected'),
+            defaultValue: 'Pending Triage' 
+        }
+    });
+
+    ServiceRequest.associate = (models) => {
+        ServiceRequest.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
+        ServiceRequest.belongsTo(models.User, { foreignKey: 'agentId', as: 'AssignedAgent' });
+        ServiceRequest.belongsTo(models.ServiceCategory, { foreignKey: 'categoryId', as: 'Category' });
+        ServiceRequest.hasOne(models.Proposal, { foreignKey: 'requestId', as: 'Proposal' });
+    };
+    return ServiceRequest;
+};
+</file>
+
+<file path="src/models/User.js">
+module.exports = (sequelize, DataTypes) => {
+  const User = sequelize.define("User", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    fullName: { type: DataTypes.STRING, allowNull: false },
+    email: { type: DataTypes.STRING, allowNull: false, unique: true, validate: { isEmail: true } },
+    password: { type: DataTypes.STRING, allowNull: false },
+    role: { type: DataTypes.ENUM("Admin", "Agent", "Client"), allowNull: false },
+    mobile: { type: DataTypes.STRING },
+    status: { 
+        type: DataTypes.ENUM('Pending Approval', 'Active', 'Rejected'),
+        defaultValue: 'Pending Approval' 
+    }
+  });
+
+  User.associate = (models) => {
+    User.hasOne(models.Client, { foreignKey: "userId", as: "ClientProfile" });
+    User.hasMany(models.ServiceRequest, { foreignKey: 'agentId', as: 'AssignedRequests' });
+    User.hasMany(models.Project, { foreignKey: 'agentId', as: 'ManagedProjects' });
+  };
+  return User;
+};
+</file>
+
+<file path="src/services/crypto.service.js">
+const crypto = require('crypto');
+const algorithm = 'aes-256-ctr';
+
+// Ensure this key is exactly 32 chars in .env, or we hash it to force 32 bytes
+const getKey = () => crypto.createHash('sha256').update(String(process.env.VAULT_SECRET)).digest('base64').substr(0, 32);
+
+exports.encrypt = (text) => {
+    if (!text) return null;
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(algorithm, getKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+};
+
+exports.decrypt = (hash) => {
+    if (!hash) return null;
+    const parts = hash.split(':');
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encryptedText = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv(algorithm, getKey(), iv);
+    const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
+    return decrypted.toString();
+};
+</file>
+
+<file path="src/api/auth.routes.js">
+const express = require('express');
+const router = express.Router();
+const { register, login, getMe, updateMe } = require('../controllers/auth.controller');
+const { protect } = require('../middleware/auth.middleware');
+
+router.post('/register', register);
+router.post('/login', login);
+
+// --- NEW ROUTES ---
+router.get('/me', protect, getMe);
+router.put('/me', protect, updateMe);
+
+module.exports = router;
+</file>
+
+<file path="src/api/client.routes.js">
+const express = require('express');
+const router = express.Router();
+const { getMyProfile, updateProfile, getAgentClients } = require('../controllers/client.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.get('/me', protect, authorize('Client'), getMyProfile);
+router.put('/me', protect, authorize('Client'), updateProfile);
+
+// --- NEW: Route for Agents to view their clients ---
+router.get('/agent-list', protect, authorize('Agent'), getAgentClients);
+
+module.exports = router;
+</file>
+
+<file path="src/api/project.routes.js">
+const express = require('express');
+const router = express.Router();
+const { 
+    getProjects, 
+    getProject, 
+    updateProjectStatus, 
+    uploadAsset, 
+    getAssets,
+    getProjectVault,
+    addNote,   // <-- Import this
+    getNotes   // <-- Import this
+} = require('../controllers/project.controller');
+const { protect } = require('../middleware/auth.middleware');
+const upload = require('../middleware/upload.middleware');
+
+// Routes
+router.get('/', protect, getProjects);
+router.get('/:id', protect, getProject);
+router.get('/:id/vault', protect, getProjectVault);
+router.patch('/:id', protect, updateProjectStatus);
+
+// Asset Routes
+router.post('/:id/assets', protect, upload.single('file'), uploadAsset);
+router.get('/:id/assets', protect, getAssets);
+
+// --- NEW NOTE ROUTES ---
+router.get('/:id/notes', protect, getNotes);
+router.post('/:id/notes', protect, addNote);
+
+module.exports = router;
 </file>
 
 <file path="src/controllers/auth.controller.js">
@@ -748,22 +1059,24 @@ exports.getAgentClients = async (req, res, next) => {
 
 <file path="src/controllers/project.controller.js">
 const db = require("../models");
+const { decrypt } = require("../services/crypto.service");
 const Project = db.Project;
 const ProjectAsset = db.ProjectAsset;
+const ProjectNote = db.ProjectNote; // Import Note Model
+const Client = db.Client;
+const User = db.User;
 
 // List Projects (Filtered by Role)
 exports.getProjects = async (req, res, next) => {
     try {
         let where = {};
         if (req.user.role === 'Client') {
-            where.clientId = req.user.ClientProfile?.id; 
-            // Note: Ensure User->Client association is loaded or use req.user.ClientProfile.id logic
+            const client = await Client.findOne({ where: { userId: req.user.id } });
+            if (client) where.clientId = client.id;
         } else if (req.user.role === 'Agent') {
             where.agentId = req.user.id;
         }
         
-        // If Admin, empty where clause (sees all)
-
         const projects = await Project.findAll({ 
             where,
             include: ['Client', 'Request', 'Agent'] 
@@ -772,10 +1085,62 @@ exports.getProjects = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
+// Get Single Project Details
+exports.getProject = async (req, res, next) => {
+    try {
+        const project = await Project.findByPk(req.params.id, {
+            include: ['Client', 'Request', 'Agent', 'Assets']
+        });
+
+        if (!project) return res.status(404).json({ message: "Project not found" });
+
+        // Security check: Agent
+        if (req.user.role === 'Agent' && project.agentId !== req.user.id) {
+            return res.status(403).json({ message: "Access denied" });
+        }
+
+        // Security check: Client
+        if (req.user.role === 'Client') {
+            const client = await Client.findOne({ where: { userId: req.user.id } });
+            if (!client || project.clientId !== client.id) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+        }
+
+        res.json(project);
+    } catch (error) { next(error); }
+};
+
+// Get Project Vault (Credentials)
+exports.getProjectVault = async (req, res, next) => {
+    try {
+        const project = await Project.findByPk(req.params.id, {
+            include: ['Client']
+        });
+
+        if (!project) return res.status(404).json({ message: "Project not found" });
+
+        // Security checks
+        if (req.user.role === 'Agent' && project.agentId !== req.user.id) {
+            return res.status(403).json({ message: "Access denied" });
+        }
+        if (req.user.role === 'Client') {
+            const client = await Client.findOne({ where: { userId: req.user.id } });
+            if (!client || project.clientId !== client.id) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+        }
+
+        const vaultData = project.Client.technicalVault;
+        const decryptedVault = vaultData ? decrypt(vaultData) : "No credentials stored.";
+
+        res.json({ vault: decryptedVault });
+    } catch (error) { next(error); }
+};
+
 // Update Project Status
 exports.updateProjectStatus = async (req, res, next) => {
     try {
-        // Add logic to check if user owns project if needed
         await Project.update(req.body, { where: { id: req.params.id } });
         res.json({ message: "Project Updated" });
     } catch (error) { next(error); }
@@ -787,7 +1152,7 @@ exports.uploadAsset = async (req, res, next) => {
         if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
         const projectId = req.params.id;
-        const type = req.query.type || 'ClientAsset'; // 'ClientAsset' or 'Deliverable'
+        const type = req.query.type || 'ClientAsset'; 
 
         const asset = await ProjectAsset.create({
             projectId,
@@ -809,6 +1174,40 @@ exports.getAssets = async (req, res, next) => {
         res.json(assets);
     } catch (error) { next(error); }
 };
+
+// --- NEW FUNCTIONS FOR NOTES ---
+
+exports.addNote = async (req, res, next) => {
+    try {
+        const { content } = req.body;
+        const projectId = req.params.id;
+
+        if (!content) return res.status(400).json({ message: "Content is required" });
+
+        const note = await ProjectNote.create({
+            projectId,
+            userId: req.user.id,
+            content
+        });
+
+        const fullNote = await ProjectNote.findByPk(note.id, {
+            include: [{ model: User, as: 'Author', attributes: ['fullName', 'role'] }]
+        });
+
+        res.status(201).json(fullNote);
+    } catch (error) { next(error); }
+};
+
+exports.getNotes = async (req, res, next) => {
+    try {
+        const notes = await ProjectNote.findAll({
+            where: { projectId: req.params.id },
+            include: [{ model: User, as: 'Author', attributes: ['fullName', 'role'] }],
+            order: [['createdAt', 'ASC']]
+        });
+        res.json(notes);
+    } catch (error) { next(error); }
+};
 </file>
 
 <file path="src/controllers/proposal.controller.js">
@@ -819,34 +1218,37 @@ const Proposal = db.Proposal;
 const ProposalLineItem = db.ProposalLineItem;
 const ServiceRequest = db.ServiceRequest;
 const Project = db.Project;
-const Client = db.Client; // Needed for client name
+const Client = db.Client;
 
 exports.createProposal = async (req, res, next) => {
     try {
-        const { requestId, items } = req.body; // items = [{ description, price }]
+        const { requestId, items } = req.body; 
         
         // Calculate Total
         const totalAmount = items.reduce((sum, item) => sum + Number(item.price), 0);
 
         const t = await db.sequelize.transaction();
         try {
-            // 1. Create Proposal Record
+            // Check if proposal exists and delete old one (to allow Re-create)
+            await Proposal.destroy({ where: { requestId }, transaction: t });
+
+            // 1. Create Proposal Record (Status: Draft)
             const proposal = await Proposal.create({
                 requestId,
                 agentId: req.user.id,
                 totalAmount,
-                pdfPath: "pending..." // Temporary
+                status: 'Draft', // Explicitly Draft
+                pdfPath: "pending..." 
             }, { transaction: t });
 
             // 2. Create Line Items
             const lineItems = items.map(i => ({ ...i, proposalId: proposal.id }));
             await ProposalLineItem.bulkCreate(lineItems, { transaction: t });
 
-            // 3. Update Request Status
-            await ServiceRequest.update({ status: 'Quoted' }, { where: { id: requestId }, transaction: t });
+            // NOTE: We do NOT update ServiceRequest status to 'Quoted' yet. 
+            // It remains 'Assigned' until the agent clicks "Send".
 
-            // 4. Generate PDF
-            // Fetch Client Name for PDF
+            // 3. Generate PDF
             const requestData = await ServiceRequest.findByPk(requestId, { include: ['Client'] });
             const clientName = requestData?.Client?.companyName || "Valued Client";
 
@@ -887,18 +1289,25 @@ exports.sendProposal = async (req, res, next) => {
         // Send Email
         await sendProposalEmail(clientEmail, clientName, proposal.id, proposal.pdfPath);
 
-        // Update status to 'Sent' if it was Draft
-        if (proposal.status === 'Draft') {
-            await proposal.update({ status: 'Sent' });
-        }
+        const t = await db.sequelize.transaction();
+        try {
+            // 1. Update Proposal Status
+            await proposal.update({ status: 'Sent' }, { transaction: t });
 
-        res.json({ message: `Proposal sent to ${clientEmail}` });
+            // 2. Update Request Status to 'Quoted' (This triggers the Client Dashboard view)
+            await ServiceRequest.update(
+                { status: 'Quoted' }, 
+                { where: { id: proposal.requestId }, transaction: t }
+            );
+
+            await t.commit();
+            res.json({ message: `Proposal sent to ${clientEmail} and Dashboard updated.` });
+        } catch (err) { await t.rollback(); throw err; }
+
     } catch (error) { next(error); }
 };
 
-// ... keep acceptProposal as is
 exports.acceptProposal = async (req, res, next) => {
-    // ... (Your existing code for acceptProposal)
     try {
         const proposal = await Proposal.findByPk(req.params.id, {
             include: [{ model: ServiceRequest, as: 'Request' }]
@@ -918,7 +1327,7 @@ exports.acceptProposal = async (req, res, next) => {
             const project = await Project.create({
                 requestId: proposal.requestId,
                 clientId: proposal.Request.clientId,
-                agentId: proposal.AgentId || req.user.id, // Fallback logic needed if AgentId isn't loaded
+                agentId: proposal.Request.agentId || req.user.id, 
                 globalStatus: 'Pending'
             }, { transaction: t });
 
@@ -980,162 +1389,6 @@ exports.assignRequest = async (req, res, next) => {
 };
 </file>
 
-<file path="src/middleware/auth.middleware.js">
-const jwt = require("jsonwebtoken");
-const { User } = require("../models");
-
-exports.protect = async (req, res, next) => {
-  let token;
-  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
-  }
-
-  if (!token) return res.status(401).json({ message: "Not authorized to access this route" });
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findByPk(decoded.id);
-
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // Gatekeeper: Check Status
-    if (user.status !== 'Active') {
-        return res.status(403).json({ message: `Account is ${user.status}. Access Denied.` });
-    }
-
-    req.user = user;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: "Not authorized, token failed" });
-  }
-};
-
-exports.authorize = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ message: `Role ${req.user.role} is not authorized` });
-    }
-    next();
-  };
-};
-</file>
-
-<file path="src/middleware/error.middleware.js">
-const errorMiddleware = (err, req, res, next) => {
-    console.error(`❌ Error: ${err.message}`);
-    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-    res.status(statusCode).json({
-        message: err.message,
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
-    });
-};
-
-module.exports = { errorMiddleware };
-</file>
-
-<file path="src/middleware/upload.middleware.js">
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-
-// Ensure directories exist
-const createDir = (dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-};
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let uploadPath = "uploads/assets"; // Default
-    // You can segregate based on route or type if needed
-    createDir(uploadPath);
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    // timestamp-filename.ext
-    cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`);
-  },
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|pdf|zip|rar|doc|docx/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (extname) {
-    return cb(null, true);
-  } else {
-    cb(new Error("Error: File type not supported!"));
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: fileFilter,
-});
-
-module.exports = upload;
-</file>
-
-<file path="src/models/Client.js">
-module.exports = (sequelize, DataTypes) => {
-    const Client = sequelize.define('Client', {
-        id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-        companyName: { type: DataTypes.STRING },
-        industry: { type: DataTypes.STRING },
-        websiteUrl: { type: DataTypes.STRING },
-        technicalVault: { type: DataTypes.TEXT } // Stores Encrypted String
-    });
-
-    Client.associate = (models) => {
-        Client.belongsTo(models.User, { foreignKey: 'userId', as: 'User' });
-        Client.hasMany(models.ServiceRequest, { foreignKey: 'clientId', as: 'Requests' });
-        Client.hasMany(models.Project, { foreignKey: 'clientId', as: 'Projects' });
-    };
-    return Client;
-};
-</file>
-
-<file path="src/models/index.js">
-const fs = require('fs');
-const path = require('path');
-const Sequelize = require('sequelize');
-const basename = path.basename(__filename);
-const env = process.env.NODE_ENV || 'development';
-const config = require('../config/database')[env];
-const db = {};
-
-let sequelize;
-if (config.use_env_variable) {
-  sequelize = new Sequelize(process.env[config.use_env_variable], config);
-} else {
-  sequelize = new Sequelize(config.database, config.username, config.password, config);
-}
-
-fs
-  .readdirSync(__dirname)
-  .filter(file => {
-    return (file.indexOf('.') !== 0) && (file !== basename) && (file.slice(-3) === '.js');
-  })
-  .forEach(file => {
-    const model = require(path.join(__dirname, file))(sequelize, Sequelize.DataTypes);
-    db[model.name] = model;
-  });
-
-Object.keys(db).forEach(modelName => {
-  if (db[modelName].associate) {
-    db[modelName].associate(db);
-  }
-});
-
-db.sequelize = sequelize;
-db.Sequelize = Sequelize;
-
-module.exports = db;
-</file>
-
 <file path="src/models/Project.js">
 module.exports = (sequelize, DataTypes) => {
     const Project = sequelize.define('Project', {
@@ -1144,7 +1397,7 @@ module.exports = (sequelize, DataTypes) => {
             defaultValue: 'Pending' 
         },
         progressPercent: { type: DataTypes.INTEGER, defaultValue: 0 },
-        ecd: { type: DataTypes.DATEONLY }, // Estimated Completion Date
+        ecd: { type: DataTypes.DATEONLY },
     });
 
     Project.associate = (models) => {
@@ -1152,136 +1405,11 @@ module.exports = (sequelize, DataTypes) => {
         Project.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
         Project.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
         Project.hasMany(models.ProjectAsset, { foreignKey: 'projectId', as: 'Assets' });
+        
+        // --- NEW ASSOCIATION ---
+        Project.hasMany(models.ProjectNote, { foreignKey: 'projectId', as: 'Notes' });
     };
     return Project;
-};
-</file>
-
-<file path="src/models/ProjectAsset.js">
-module.exports = (sequelize, DataTypes) => {
-    const ProjectAsset = sequelize.define('ProjectAsset', {
-        filePath: { type: DataTypes.STRING, allowNull: false },
-        fileName: { type: DataTypes.STRING },
-        type: { type: DataTypes.ENUM('ClientAsset', 'Deliverable'), defaultValue: 'ClientAsset' }
-    });
-    ProjectAsset.associate = (models) => {
-        ProjectAsset.belongsTo(models.Project, { foreignKey: 'projectId' });
-    };
-    return ProjectAsset;
-};
-</file>
-
-<file path="src/models/Proposal.js">
-module.exports = (sequelize, DataTypes) => {
-    const Proposal = sequelize.define('Proposal', {
-        status: { 
-            type: DataTypes.ENUM('Draft', 'Sent', 'Accepted', 'Rejected'),
-            defaultValue: 'Draft' 
-        },
-        totalAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0.00 },
-        pdfPath: { type: DataTypes.STRING }
-    });
-
-    Proposal.associate = (models) => {
-        Proposal.belongsTo(models.ServiceRequest, { foreignKey: 'requestId', as: 'Request' });
-        Proposal.belongsTo(models.User, { foreignKey: 'agentId', as: 'Agent' });
-        Proposal.hasMany(models.ProposalLineItem, { foreignKey: 'proposalId', as: 'Items' });
-    };
-    return Proposal;
-};
-</file>
-
-<file path="src/models/ProposalLineItem.js">
-module.exports = (sequelize, DataTypes) => {
-    const ProposalLineItem = sequelize.define('ProposalLineItem', {
-        description: { type: DataTypes.STRING, allowNull: false },
-        price: { type: DataTypes.DECIMAL(10, 2), allowNull: false }
-    });
-    ProposalLineItem.associate = (models) => {
-        ProposalLineItem.belongsTo(models.Proposal, { foreignKey: 'proposalId' });
-    };
-    return ProposalLineItem;
-};
-</file>
-
-<file path="src/models/ServiceCategory.js">
-module.exports = (sequelize, DataTypes) => {
-    const ServiceCategory = sequelize.define('ServiceCategory', {
-        name: { type: DataTypes.STRING, allowNull: false, unique: true },
-        description: { type: DataTypes.TEXT }
-    });
-    return ServiceCategory;
-};
-</file>
-
-<file path="src/models/ServiceRequest.js">
-module.exports = (sequelize, DataTypes) => {
-    const ServiceRequest = sequelize.define('ServiceRequest', {
-        details: { type: DataTypes.TEXT, allowNull: false },
-        priority: { type: DataTypes.ENUM('Low', 'Medium', 'High'), defaultValue: 'Medium' },
-        status: { 
-            type: DataTypes.ENUM('Pending Triage', 'Assigned', 'Quoted', 'Converted', 'Rejected'),
-            defaultValue: 'Pending Triage' 
-        }
-    });
-
-    ServiceRequest.associate = (models) => {
-        ServiceRequest.belongsTo(models.Client, { foreignKey: 'clientId', as: 'Client' });
-        ServiceRequest.belongsTo(models.User, { foreignKey: 'agentId', as: 'AssignedAgent' });
-        ServiceRequest.belongsTo(models.ServiceCategory, { foreignKey: 'categoryId', as: 'Category' });
-        ServiceRequest.hasOne(models.Proposal, { foreignKey: 'requestId', as: 'Proposal' });
-    };
-    return ServiceRequest;
-};
-</file>
-
-<file path="src/models/User.js">
-module.exports = (sequelize, DataTypes) => {
-  const User = sequelize.define("User", {
-    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    fullName: { type: DataTypes.STRING, allowNull: false },
-    email: { type: DataTypes.STRING, allowNull: false, unique: true, validate: { isEmail: true } },
-    password: { type: DataTypes.STRING, allowNull: false },
-    role: { type: DataTypes.ENUM("Admin", "Agent", "Client"), allowNull: false },
-    mobile: { type: DataTypes.STRING },
-    status: { 
-        type: DataTypes.ENUM('Pending Approval', 'Active', 'Rejected'),
-        defaultValue: 'Pending Approval' 
-    }
-  });
-
-  User.associate = (models) => {
-    User.hasOne(models.Client, { foreignKey: "userId", as: "ClientProfile" });
-    User.hasMany(models.ServiceRequest, { foreignKey: 'agentId', as: 'AssignedRequests' });
-    User.hasMany(models.Project, { foreignKey: 'agentId', as: 'ManagedProjects' });
-  };
-  return User;
-};
-</file>
-
-<file path="src/services/crypto.service.js">
-const crypto = require('crypto');
-const algorithm = 'aes-256-ctr';
-
-// Ensure this key is exactly 32 chars in .env, or we hash it to force 32 bytes
-const getKey = () => crypto.createHash('sha256').update(String(process.env.VAULT_SECRET)).digest('base64').substr(0, 32);
-
-exports.encrypt = (text) => {
-    if (!text) return null;
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(algorithm, getKey(), iv);
-    const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
-    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
-};
-
-exports.decrypt = (hash) => {
-    if (!hash) return null;
-    const parts = hash.split(':');
-    const iv = Buffer.from(parts.shift(), 'hex');
-    const encryptedText = Buffer.from(parts.join(':'), 'hex');
-    const decipher = crypto.createDecipheriv(algorithm, getKey(), iv);
-    const decrypted = Buffer.concat([decipher.update(encryptedText), decipher.final()]);
-    return decrypted.toString();
 };
 </file>
 
@@ -1294,7 +1422,7 @@ const fs = require("fs");
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+  secure: process.env.SMTP_SECURE === "false", // true for 465, false for other ports
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -1372,7 +1500,9 @@ const path = require("path");
 exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument();
+      // Create document with margins
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      
       const fileName = `proposal-${proposalId}-${Date.now()}.pdf`;
       const uploadDir = path.join(__dirname, "../../uploads/proposals");
       
@@ -1386,27 +1516,130 @@ exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
 
       doc.pipe(writeStream);
 
-      // Header
-      doc.fontSize(25).text("Digitize Your Biz", { align: "center" });
-      doc.moveDown();
-      doc.fontSize(18).text("Project Proposal", { align: "center" });
-      doc.moveDown();
+      // --- THEME CONSTANTS ---
+      const primaryColor = "#0D1B2A"; // Dark Blue
+      const accentColor = "#2EC4B6";  // Teal
+      const greyColor = "#4A5568";
+      const lightGrey = "#F5F7FA";
+      const white = "#FFFFFF";
 
-      // Client Info
-      doc.fontSize(12).text(`Client: ${clientName}`);
-      doc.text(`Date: ${new Date().toLocaleDateString()}`);
-      doc.moveDown();
+      // --- HEADER SECTION ---
+      // Draw top background rect
+      doc.rect(0, 0, 595.28, 120).fill(primaryColor);
+      
+      // Company Name
+      doc.fillColor(white).fontSize(26).font("Helvetica-Bold")
+         .text("BizTech Biz Digital", 50, 40);
+      
+      // Subtitle
+      doc.fillColor(accentColor).fontSize(10).font("Helvetica")
+         .text("Agency Management Portal", 50, 75);
 
-      // Line Items
-      doc.text("Services Included:", { underline: true });
-      doc.moveDown(0.5);
+      // "PROPOSAL" Label
+      doc.fillColor(white).fontSize(36).font("Helvetica-Bold")
+         .text("PROPOSAL", 0, 40, { align: "right", width: 545.28 }); // 595 - 50 margin
 
-      items.forEach((item) => {
-        doc.text(`- ${item.description}: $${item.price}`);
+      // --- INFO SECTION ---
+      const yPos = 160;
+      
+      // Left Column: Prepared For
+      doc.fillColor(greyColor).fontSize(10).font("Helvetica-Bold").text("PREPARED FOR", 50, yPos);
+      doc.rect(50, yPos + 12, 200, 1).fill(accentColor); // Underline
+      
+      doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold").text(clientName, 50, yPos + 25);
+      doc.fillColor(greyColor).fontSize(10).font("Helvetica").text("Valued Client", 50, yPos + 40);
+
+      // Right Column: Proposal Details
+      doc.fillColor(greyColor).fontSize(10).font("Helvetica-Bold").text("PROPOSAL DETAILS", 350, yPos);
+      doc.rect(350, yPos + 12, 195, 1).fill(accentColor); // Underline
+
+      const detailsY = yPos + 25;
+      doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold");
+      doc.text("Proposal ID:", 350, detailsY);
+      doc.text("Date:", 350, detailsY + 15);
+      doc.text("Valid Until:", 350, detailsY + 30);
+
+      doc.fillColor(greyColor).font("Helvetica");
+      doc.text(`#${proposalId}`, 450, detailsY, { align: 'right', width: 95 });
+      doc.text(new Date().toLocaleDateString(), 450, detailsY + 15, { align: 'right', width: 95 });
+      const validDate = new Date();
+      validDate.setDate(validDate.getDate() + 14);
+      doc.text(validDate.toLocaleDateString(), 450, detailsY + 30, { align: 'right', width: 95 });
+
+      doc.moveDown(4);
+
+      // --- TABLE SECTION ---
+      const tableTop = 270;
+      
+      // Table Header Background
+      doc.rect(50, tableTop, 495, 30).fill(primaryColor);
+      
+      // Table Header Text
+      doc.fillColor(white).fontSize(10).font("Helvetica-Bold");
+      doc.text("DESCRIPTION", 65, tableTop + 10);
+      doc.text("AMOUNT", 450, tableTop + 10, { width: 90, align: "right" });
+
+      // --- TABLE ITEMS ---
+      let y = tableTop + 30;
+      doc.font("Helvetica").fontSize(10);
+
+      items.forEach((item, index) => {
+        // Stripe background for alternate rows
+        if (index % 2 === 0) {
+            doc.rect(50, y, 495, 30).fill(lightGrey);
+        } else {
+            // Ensure white background implicitly or fill white if needed
+        }
+
+        // Reset fill color for text
+        doc.fillColor("#333333");
+
+        // Vertical alignment calculation
+        const textY = y + 10;
+
+        doc.text(item.description, 65, textY);
+        doc.text(`$${Number(item.price).toFixed(2)}`, 450, textY, { width: 90, align: "right" });
+        
+        y += 30;
       });
 
-      doc.moveDown();
-      doc.fontSize(14).text(`Total Amount: $${totalAmount}`, { bold: true });
+      // Bottom line of table
+      doc.rect(50, y, 495, 1).fill(greyColor);
+
+      // --- TOTALS SECTION ---
+      y += 20;
+      const totalBoxTop = y;
+      
+      // Total Box Background
+      doc.rect(350, totalBoxTop, 195, 45).fill(accentColor);
+      
+      doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold");
+      doc.text("TOTAL ESTIMATE", 370, totalBoxTop + 16);
+      
+      doc.fillColor(white).fontSize(16).font("Helvetica-Bold");
+      doc.text(`$${Number(totalAmount).toFixed(2)}`, 450, totalBoxTop + 14, { width: 80, align: "right" });
+
+      // --- FOOTER / TERMS ---
+      const bottomPage = 680;
+      
+      doc.rect(50, bottomPage, 495, 2).fill(primaryColor);
+      
+      doc.fillColor(primaryColor).fontSize(11).font("Helvetica-Bold").text("Terms & Conditions", 50, bottomPage + 15);
+      
+      doc.fillColor(greyColor).fontSize(9).font("Helvetica")
+         .text("1. A 50% deposit is required to commence work on the project.", 50, bottomPage + 30)
+         .text("2. This proposal is valid for 14 days from the date of issue.", 50, bottomPage + 45)
+         .text("3. All deliverables will be transferred upon final payment.", 50, bottomPage + 60);
+
+      // Company Footer
+      const footerY = 760;
+      doc.rect(0, footerY, 595.28, 842 - footerY).fill(primaryColor); // Bottom bar
+      
+      doc.fillColor(white).fontSize(10).font("Helvetica-Bold")
+         .text("BizTech Biz Digital", 0, footerY + 15, { align: "center" });
+      
+      doc.fillColor(accentColor).fontSize(9).font("Helvetica")
+         .text("services@biztech.ae  |  +971 50 328 8786  |  www.biztech.ae", 0, footerY + 30, { align: "center" });
 
       doc.end();
 
