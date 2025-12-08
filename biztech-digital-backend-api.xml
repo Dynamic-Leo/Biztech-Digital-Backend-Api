@@ -486,19 +486,6 @@ router.patch('/:id/accept', protect, authorize('Client'), acceptProposal);
 module.exports = router;
 </file>
 
-<file path="src/api/request.routes.js">
-const express = require('express');
-const router = express.Router();
-const { createRequest, getRequests, assignRequest } = require('../controllers/request.controller');
-const { protect, authorize } = require('../middleware/auth.middleware');
-
-router.post('/', protect, authorize('Client'), createRequest);
-router.get('/', protect, getRequests);
-router.patch('/:id/assign', protect, authorize('Admin'), assignRequest);
-
-module.exports = router;
-</file>
-
 <file path="src/config/database.js">
 require('dotenv').config();
 
@@ -880,6 +867,22 @@ router.get('/:id/assets', protect, getAssets);
 // --- NEW NOTE ROUTES ---
 router.get('/:id/notes', protect, getNotes);
 router.post('/:id/notes', protect, addNote);
+
+module.exports = router;
+</file>
+
+<file path="src/api/request.routes.js">
+const express = require('express');
+const router = express.Router();
+const { createRequest, getRequests, assignRequest, getClientTimeline } = require('../controllers/request.controller');
+const { protect, authorize } = require('../middleware/auth.middleware');
+
+router.post('/', protect, authorize('Client'), createRequest);
+router.get('/', protect, getRequests);
+router.patch('/:id/assign', protect, authorize('Admin'), assignRequest);
+
+// NEW: Admin route to see specific client timeline
+router.get('/timeline/:clientId', protect, authorize('Admin'), getClientTimeline);
 
 module.exports = router;
 </file>
@@ -1338,57 +1341,6 @@ exports.acceptProposal = async (req, res, next) => {
 };
 </file>
 
-<file path="src/controllers/request.controller.js">
-const db = require("../models");
-const ServiceRequest = db.ServiceRequest;
-
-exports.createRequest = async (req, res, next) => {
-    try {
-        const client = await db.Client.findOne({ where: { userId: req.user.id } });
-        if (!client) return res.status(404).json({ message: "Client profile missing" });
-
-        const request = await ServiceRequest.create({
-            clientId: client.id,
-            categoryId: req.body.categoryId,
-            details: req.body.details,
-            priority: req.body.priority
-        });
-        res.status(201).json(request);
-    } catch (error) { next(error); }
-};
-
-exports.getRequests = async (req, res, next) => {
-    try {
-        let where = {};
-        if (req.user.role === 'Client') {
-            const client = await db.Client.findOne({ where: { userId: req.user.id } });
-            where.clientId = client.id;
-        } else if (req.user.role === 'Agent') {
-            where.agentId = req.user.id;
-        } else if (req.user.role === 'Admin') {
-            where.status = 'Pending Triage'; // Admin triage view
-        }
-
-        const requests = await ServiceRequest.findAll({ 
-            where, 
-            include: ['Client', 'Category', 'AssignedAgent', 'Proposal'] // Added Proposal to include
-        });
-        res.json(requests);
-    } catch (error) { next(error); }
-};
-
-exports.assignRequest = async (req, res, next) => {
-    try {
-        const { agentId } = req.body;
-        await ServiceRequest.update(
-            { agentId, status: 'Assigned' },
-            { where: { id: req.params.id } }
-        );
-        res.json({ message: "Agent Assigned" });
-    } catch (error) { next(error); }
-};
-</file>
-
 <file path="src/models/Project.js">
 module.exports = (sequelize, DataTypes) => {
     const Project = sequelize.define('Project', {
@@ -1658,6 +1610,129 @@ exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
 };
 </file>
 
+<file path="src/controllers/request.controller.js">
+const db = require("../models");
+const ServiceRequest = db.ServiceRequest;
+const Project = db.Project;
+const Proposal = db.Proposal;
+const Client = db.Client;
+const User = db.User;
+
+exports.createRequest = async (req, res, next) => {
+    try {
+        const client = await db.Client.findOne({ where: { userId: req.user.id } });
+        if (!client) return res.status(404).json({ message: "Client profile missing" });
+
+        const request = await ServiceRequest.create({
+            clientId: client.id,
+            categoryId: req.body.categoryId,
+            details: req.body.details,
+            priority: req.body.priority
+        });
+        res.status(201).json(request);
+    } catch (error) { next(error); }
+};
+
+exports.getRequests = async (req, res, next) => {
+    try {
+        let where = {};
+        
+        // Role-based Filtering
+        if (req.user.role === 'Client') {
+            const client = await db.Client.findOne({ where: { userId: req.user.id } });
+            where.clientId = client.id;
+        } else if (req.user.role === 'Agent') {
+            where.agentId = req.user.id;
+        } else if (req.user.role === 'Admin' || req.user.role === 'admin') {
+            // Admin sees all by default, but respects status filter if provided
+            if (req.query.status) {
+                where.status = req.query.status;
+            }
+        }
+
+        const requests = await ServiceRequest.findAll({ 
+            where, 
+            include: ['Client', 'Category', 'AssignedAgent', 'Proposal'],
+            order: [['createdAt', 'DESC']]
+        });
+        res.json(requests);
+    } catch (error) { next(error); }
+};
+
+exports.assignRequest = async (req, res, next) => {
+    try {
+        const { agentId } = req.body;
+        await ServiceRequest.update(
+            { agentId, status: 'Assigned' },
+            { where: { id: req.params.id } }
+        );
+        res.json({ message: "Agent Assigned" });
+    } catch (error) { next(error); }
+};
+
+// ... (getClientTimeline remains unchanged) ...
+exports.getClientTimeline = async (req, res, next) => {
+    try {
+        const clientId = req.params.clientId;
+
+        const requests = await ServiceRequest.findAll({
+            where: { clientId },
+            include: [
+                { 
+                    model: Proposal, 
+                    as: 'Proposal',
+                    attributes: ['id', 'status', 'totalAmount', 'createdAt', 'pdfPath']
+                },
+                { 
+                    model: db.ServiceCategory, 
+                    as: 'Category',
+                    attributes: ['name']
+                },
+                {
+                    model: User,
+                    as: 'AssignedAgent',
+                    attributes: ['fullName']
+                }
+            ],
+            order: [['createdAt', 'DESC']]
+        });
+
+        const projects = await Project.findAll({
+            where: { clientId },
+            attributes: ['id', 'requestId', 'globalStatus', 'progressPercent', 'createdAt', 'ecd']
+        });
+
+        const timeline = requests.map(req => {
+            const project = projects.find(p => p.requestId === req.id);
+            return {
+                requestId: req.id,
+                category: req.Category ? req.Category.name : 'General',
+                details: req.details,
+                requestDate: req.createdAt,
+                requestStatus: req.status,
+                agentName: req.AssignedAgent ? req.AssignedAgent.fullName : null,
+                proposal: req.Proposal ? {
+                    id: req.Proposal.id,
+                    status: req.Proposal.status,
+                    amount: req.Proposal.totalAmount,
+                    date: req.Proposal.createdAt,
+                    pdf: req.Proposal.pdfPath
+                } : null,
+                project: project ? {
+                    id: project.id,
+                    status: project.globalStatus,
+                    progress: project.progressPercent,
+                    startDate: project.createdAt,
+                    completionDate: project.ecd
+                } : null
+            };
+        });
+
+        res.json(timeline);
+    } catch (error) { next(error); }
+};
+</file>
+
 <file path="src/api/admin.routes.js">
 const express = require('express');
 const router = express.Router();
@@ -1666,28 +1741,38 @@ const {
     updateUserStatus, 
     createCategory, 
     getCategories, 
-    updateCategory, // Added
-    deleteCategory, // Added
+    updateCategory,
+    deleteCategory,
     createAgent, 
-    getAgents 
+    getAgents,
+    getSystemHealth,
+    toggleAgentStatus,
+    deleteAgent,
+    getAllClients // <-- Ensure this is imported
 } = require('../controllers/admin.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
 router.use(protect);
 
-// Approval Routes
+// System
+router.get('/health', authorize('Admin'), getSystemHealth);
+
+// Users & Clients (Fixes the 404)
 router.get('/users/pending', authorize('Admin'), getPendingUsers);
 router.patch('/users/:id/status', authorize('Admin'), updateUserStatus);
+router.get('/clients', authorize('Admin'), getAllClients); // <-- THIS LINE FIXES THE 404
 
-// Category Routes
+// Categories
 router.post('/categories', authorize('Admin'), createCategory);
 router.get('/categories', getCategories);
-router.put('/categories/:id', authorize('Admin'), updateCategory); // Added
-router.delete('/categories/:id', authorize('Admin'), deleteCategory); // Added
+router.put('/categories/:id', authorize('Admin'), updateCategory);
+router.delete('/categories/:id', authorize('Admin'), deleteCategory);
 
-// Agent Routes
+// Agents
 router.post('/agents', authorize('Admin'), createAgent);
 router.get('/agents', authorize('Admin'), getAgents);
+router.patch('/agents/:id/status', authorize('Admin'), toggleAgentStatus);
+router.delete('/agents/:id', authorize('Admin'), deleteAgent);
 
 module.exports = router;
 </file>
@@ -1697,7 +1782,17 @@ const bcrypt = require("bcryptjs");
 const db = require("../models");
 const User = db.User;
 const ServiceCategory = db.ServiceCategory;
+const Client = db.Client;
 const { sendAccountApproval } = require('../services/email.service');
+
+exports.getSystemHealth = async (req, res, next) => {
+    try {
+        await db.sequelize.authenticate();
+        res.json({ server: 'Online', database: 'Connected', timestamp: new Date() });
+    } catch (error) {
+        res.status(500).json({ server: 'Online', database: 'Disconnected', error: error.message });
+    }
+};
 
 exports.getPendingUsers = async (req, res, next) => {
     try {
@@ -1706,27 +1801,67 @@ exports.getPendingUsers = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
+// --- GET ALL CLIENTS (Robust Version) ---
+exports.getAllClients = async (req, res, next) => {
+    try {
+        const clients = await Client.findAll({
+            include: [
+                { 
+                    model: User, 
+                    as: 'User',
+                    attributes: ['id', 'fullName', 'email', 'mobile', 'status', 'createdAt'] 
+                },
+                {
+                    model: db.Project,
+                    as: 'Projects',
+                    attributes: ['id', 'globalStatus'],
+                    required: false // Left Join
+                },
+                {
+                    model: db.ServiceRequest,
+                    as: 'Requests',
+                    attributes: ['id'],
+                    required: false // Left Join
+                }
+            ]
+        });
+
+        // Map data safely
+        const data = clients.map(c => ({
+            id: c.User ? c.User.id : null,
+            clientId: c.id,
+            name: c.User ? c.User.fullName : "Unknown User",
+            email: c.User ? c.User.email : "No Email",
+            company: c.companyName || "No Company",
+            phone: c.User ? c.User.mobile : "",
+            status: c.User ? c.User.status : "Inactive",
+            joinedDate: c.User ? c.User.createdAt : new Date(),
+            totalProjects: c.Projects ? c.Projects.length : 0,
+            activeProjects: c.Projects ? c.Projects.filter(p => p.globalStatus === 'In Progress').length : 0,
+            totalRequests: c.Requests ? c.Requests.length : 0
+        }));
+
+        res.json(data);
+    } catch (error) { 
+        console.error("Error getting clients:", error);
+        next(error); 
+    }
+};
+
 exports.updateUserStatus = async (req, res, next) => {
     try {
         const { status } = req.body; 
         const userId = req.params.id;
-
         const user = await User.findByPk(userId); 
         
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
+        if (!user) return res.status(404).json({ message: "User not found" });
         
         await User.update({ status }, { where: { id: userId } });
         
         if (status === 'Active') {
-            try {
-                await sendAccountApproval(user.email, user.fullName);
-            } catch (emailError) {
-                console.warn(`⚠️ Warning: Failed to send approval email. Check SMTP settings.`);
-            }
+            try { await sendAccountApproval(user.email, user.fullName); } 
+            catch (e) { console.warn("Email failed"); }
         }
-
         res.json({ message: `User status updated to ${status}` });
     } catch (error) { next(error); }
 };
@@ -1745,34 +1880,22 @@ exports.getCategories = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-// --- NEW: Update Category ---
 exports.updateCategory = async (req, res, next) => {
     try {
-        const { name, description } = req.body;
         const category = await ServiceCategory.findByPk(req.params.id);
-        
         if (!category) return res.status(404).json({ message: "Category not found" });
-
-        await category.update({ name, description });
-        res.json({ message: "Category updated successfully", category });
+        await category.update(req.body);
+        res.json({ message: "Category updated", category });
     } catch (error) { next(error); }
 };
 
-// --- NEW: Delete Category ---
 exports.deleteCategory = async (req, res, next) => {
     try {
         const category = await ServiceCategory.findByPk(req.params.id);
         if (!category) return res.status(404).json({ message: "Category not found" });
-
         await category.destroy();
-        res.json({ message: "Category deleted successfully" });
-    } catch (error) { 
-        // Handle Foreign Key constraint errors (if category is used in requests)
-        if (error.name === 'SequelizeForeignKeyConstraintError') {
-            return res.status(400).json({ message: "Cannot delete this service because it is currently assigned to existing client requests." });
-        }
-        next(error); 
-    }
+        res.json({ message: "Category deleted" });
+    } catch (error) { next(error); }
 };
 
 exports.getAgents = async (req, res, next) => {
@@ -1788,7 +1911,6 @@ exports.getAgents = async (req, res, next) => {
 exports.createAgent = async (req, res, next) => {
     try {
         const { fullName, email, password, mobile } = req.body;
-
         const exists = await User.findOne({ where: { email } });
         if (exists) return res.status(400).json({ message: "Email already exists" });
 
@@ -1796,18 +1918,26 @@ exports.createAgent = async (req, res, next) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const agent = await User.create({
-            fullName,
-            email,
-            password: hashedPassword,
-            role: 'Agent',
-            mobile,
-            status: 'Active'
+            fullName, email, password: hashedPassword, role: 'Agent', mobile, status: 'Active'
         });
+        res.status(201).json({ message: "Agent created", agent: { id: agent.id, email: agent.email } });
+    } catch (error) { next(error); }
+};
 
-        res.status(201).json({ 
-            message: "Agent created successfully.", 
-            agent: { id: agent.id, email: agent.email, name: agent.fullName } 
-        });
+exports.toggleAgentStatus = async (req, res, next) => {
+    try {
+        const { status } = req.body;
+        await User.update({ status }, { where: { id: req.params.id, role: 'Agent' } });
+        res.json({ message: `Agent status updated to ${status}` });
+    } catch (error) { next(error); }
+};
+
+exports.deleteAgent = async (req, res, next) => {
+    try {
+        const agent = await User.findOne({ where: { id: req.params.id, role: 'Agent' } });
+        if (!agent) return res.status(404).json({ message: "Agent not found" });
+        await agent.destroy();
+        res.json({ message: "Agent deleted" });
     } catch (error) { next(error); }
 };
 </file>

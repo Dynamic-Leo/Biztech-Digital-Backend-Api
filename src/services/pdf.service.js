@@ -5,12 +5,18 @@ const path = require("path");
 exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
   return new Promise((resolve, reject) => {
     try {
-      // Create document with margins
-      const doc = new PDFDocument({ margin: 50, size: 'A4' });
-      
+      // 1. Setup document with explicit zero bottom margin to allow footer
+      // Removing the generic 'margin: 50' to prevent conflict
+      const doc = new PDFDocument({ 
+        size: 'A4', 
+        bufferPages: true, 
+        autoFirstPage: true,
+        margins: { top: 50, left: 50, right: 50, bottom: 0 } 
+      });
+
       const fileName = `proposal-${proposalId}-${Date.now()}.pdf`;
       const uploadDir = path.join(__dirname, "../../uploads/proposals");
-      
+
       // Ensure directory exists
       if (!fs.existsSync(uploadDir)) {
         fs.mkdirSync(uploadDir, { recursive: true });
@@ -22,134 +28,193 @@ exports.generateProposalPDF = (proposalId, clientName, items, totalAmount) => {
       doc.pipe(writeStream);
 
       // --- THEME CONSTANTS ---
-      const primaryColor = "#0D1B2A"; // Dark Blue
-      const accentColor = "#2EC4B6";  // Teal
-      const greyColor = "#4A5568";
-      const lightGrey = "#F5F7FA";
-      const white = "#FFFFFF";
+      const primaryColor = "#0D1B2A"; 
+      const accentColor = "#2EC4B6";  
+      const greyText = "#64748B";     
+      const darkText = "#1E293B";     
+      const lightBg = "#F8FAFC";      
+      const tableHeaderBg = "#F1F5F9"; 
+      const borderColor = "#E2E8F0";  
+      
+      const pageWidth = 595.28;
+      const pageHeight = 841.89;
+      const margin = 50;
+      // Define a safe content limit well above footer (footer starts approx 800)
+      const contentBottomLimit = 750; 
 
       // --- HEADER SECTION ---
-      // Draw top background rect
-      doc.rect(0, 0, 595.28, 120).fill(primaryColor);
-      
-      // Company Name
-      doc.fillColor(white).fontSize(26).font("Helvetica-Bold")
-         .text("BizTech Biz Digital", 50, 40);
-      
-      // Subtitle
-      doc.fillColor(accentColor).fontSize(10).font("Helvetica")
-         .text("Agency Management Portal", 50, 75);
+      doc.rect(0, 0, pageWidth, 12).fill(accentColor);
+      doc.rect(0, 12, pageWidth, 128).fill(primaryColor);
 
-      // "PROPOSAL" Label
-      doc.fillColor(white).fontSize(36).font("Helvetica-Bold")
-         .text("PROPOSAL", 0, 40, { align: "right", width: 545.28 }); // 595 - 50 margin
+      doc.fillColor("#FFFFFF").fontSize(26).font("Helvetica-Bold")
+         .text("BizTech", margin, 55);
+      
+      const logoWidth = doc.widthOfString("BizTech");
+      doc.fillColor(accentColor).text("Biz Digital", margin + logoWidth + 6, 55);
+
+      doc.fillColor("#94A3B8").fontSize(10).font("Helvetica")
+         .text("Agency Management Portal", margin, 90);
+
+      doc.fillColor("#FFFFFF").fontSize(12).font("Helvetica-Bold")
+         .text("PROPOSAL", 0, 55, { align: "right", width: pageWidth - margin });
+
+      doc.fillColor(accentColor).fontSize(20).font("Helvetica")
+         .text(`#${proposalId}`, 0, 75, { align: "right", width: pageWidth - margin });
 
       // --- INFO SECTION ---
-      const yPos = 160;
-      
-      // Left Column: Prepared For
-      doc.fillColor(greyColor).fontSize(10).font("Helvetica-Bold").text("PREPARED FOR", 50, yPos);
-      doc.rect(50, yPos + 12, 200, 1).fill(accentColor); // Underline
-      
-      doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold").text(clientName, 50, yPos + 25);
-      doc.fillColor(greyColor).fontSize(10).font("Helvetica").text("Valued Client", 50, yPos + 40);
+      let yPos = 180;
 
-      // Right Column: Proposal Details
-      doc.fillColor(greyColor).fontSize(10).font("Helvetica-Bold").text("PROPOSAL DETAILS", 350, yPos);
-      doc.rect(350, yPos + 12, 195, 1).fill(accentColor); // Underline
+      // Left Column
+      doc.rect(margin, yPos, 260, 95).fill(lightBg); 
+      doc.rect(margin, yPos, 4, 95).fill(accentColor); 
 
-      const detailsY = yPos + 25;
-      doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold");
-      doc.text("Proposal ID:", 350, detailsY);
-      doc.text("Date:", 350, detailsY + 15);
-      doc.text("Valid Until:", 350, detailsY + 30);
+      doc.fillColor(greyText).fontSize(9).font("Helvetica-Bold")
+         .text("PREPARED FOR", margin + 20, yPos + 20);
 
-      doc.fillColor(greyColor).font("Helvetica");
-      doc.text(`#${proposalId}`, 450, detailsY, { align: 'right', width: 95 });
-      doc.text(new Date().toLocaleDateString(), 450, detailsY + 15, { align: 'right', width: 95 });
+      doc.fillColor(darkText).fontSize(14).font("Helvetica-Bold")
+         .text(clientName, margin + 20, yPos + 40);
+
+      doc.fillColor(greyText).fontSize(10).font("Helvetica")
+         .text("Valued Client", margin + 20, yPos + 60);
+
+      // Right Column
+      const col2X = 350;
+      const drawDetailRow = (label, value, y) => {
+        doc.fillColor(greyText).fontSize(10).font("Helvetica").text(label, col2X, y);
+        doc.fillColor(darkText).fontSize(10).font("Helvetica-Bold").text(value, col2X + 100, y, { align: 'right', width: 95 });
+      };
+
+      drawDetailRow("Date Issued:", new Date().toLocaleDateString(), yPos + 20);
       const validDate = new Date();
       validDate.setDate(validDate.getDate() + 14);
-      doc.text(validDate.toLocaleDateString(), 450, detailsY + 30, { align: 'right', width: 95 });
-
-      doc.moveDown(4);
+      drawDetailRow("Valid Until:", validDate.toLocaleDateString(), yPos + 45);
+      drawDetailRow("Project Type:", "Digital Services", yPos + 70);
 
       // --- TABLE SECTION ---
-      const tableTop = 270;
+      yPos += 120;
       
-      // Table Header Background
-      doc.rect(50, tableTop, 495, 30).fill(primaryColor);
-      
-      // Table Header Text
-      doc.fillColor(white).fontSize(10).font("Helvetica-Bold");
-      doc.text("DESCRIPTION", 65, tableTop + 10);
-      doc.text("AMOUNT", 450, tableTop + 10, { width: 90, align: "right" });
+      const itemColX = margin + 15;
+      const amountColX = pageWidth - margin - 100;
+      const amountColWidth = 85;
 
-      // --- TABLE ITEMS ---
-      let y = tableTop + 30;
+      const drawTableHeader = (y) => {
+        doc.rect(margin, y, pageWidth - (margin * 2), 35).fill(tableHeaderBg);
+        doc.fillColor(greyText).fontSize(9).font("Helvetica-Bold");
+        doc.text("DESCRIPTION", itemColX, y + 13);
+        doc.text("AMOUNT", amountColX, y + 13, { width: amountColWidth, align: "right" });
+      };
+
+      drawTableHeader(yPos);
+      yPos += 35;
+
       doc.font("Helvetica").fontSize(10);
 
-      items.forEach((item, index) => {
-        // Stripe background for alternate rows
-        if (index % 2 === 0) {
-            doc.rect(50, y, 495, 30).fill(lightGrey);
-        } else {
-            // Ensure white background implicitly or fill white if needed
+      items.forEach((item) => {
+        const itemHeight = 45; 
+        
+        if (yPos + itemHeight > contentBottomLimit) {
+            doc.addPage();
+            yPos = 50; 
+            drawTableHeader(yPos);
+            yPos += 35;
+            doc.font("Helvetica").fontSize(10);
         }
 
-        // Reset fill color for text
-        doc.fillColor("#333333");
+        doc.moveTo(margin, yPos + itemHeight)
+           .lineTo(pageWidth - margin, yPos + itemHeight)
+           .strokeColor(borderColor).lineWidth(0.5).stroke();
 
-        // Vertical alignment calculation
-        const textY = y + 10;
-
-        doc.text(item.description, 65, textY);
-        doc.text(`$${Number(item.price).toFixed(2)}`, 450, textY, { width: 90, align: "right" });
+        doc.fillColor(darkText);
         
-        y += 30;
+        const textY = yPos + 16;
+        doc.text(item.description, itemColX, textY);
+        doc.text(`$${Number(item.price).toFixed(2)}`, amountColX, textY, { width: amountColWidth, align: "right" });
+        
+        yPos += itemHeight;
       });
 
-      // Bottom line of table
-      doc.rect(50, y, 495, 1).fill(greyColor);
-
       // --- TOTALS SECTION ---
-      y += 20;
-      const totalBoxTop = y;
+      yPos += 20;
       
-      // Total Box Background
-      doc.rect(350, totalBoxTop, 195, 45).fill(accentColor);
-      
-      doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold");
-      doc.text("TOTAL ESTIMATE", 370, totalBoxTop + 16);
-      
-      doc.fillColor(white).fontSize(16).font("Helvetica-Bold");
-      doc.text(`$${Number(totalAmount).toFixed(2)}`, 450, totalBoxTop + 14, { width: 80, align: "right" });
+      if (yPos + 100 > contentBottomLimit) {
+          doc.addPage();
+          yPos = 50;
+      }
 
-      // --- FOOTER / TERMS ---
-      const bottomPage = 680;
-      
-      doc.rect(50, bottomPage, 495, 2).fill(primaryColor);
-      
-      doc.fillColor(primaryColor).fontSize(11).font("Helvetica-Bold").text("Terms & Conditions", 50, bottomPage + 15);
-      
-      doc.fillColor(greyColor).fontSize(9).font("Helvetica")
-         .text("1. A 50% deposit is required to commence work on the project.", 50, bottomPage + 30)
-         .text("2. This proposal is valid for 14 days from the date of issue.", 50, bottomPage + 45)
-         .text("3. All deliverables will be transferred upon final payment.", 50, bottomPage + 60);
+      const totalBoxX = pageWidth - margin - 240;
+      const totalBoxWidth = 240;
 
-      // Company Footer
-      const footerY = 760;
-      doc.rect(0, footerY, 595.28, 842 - footerY).fill(primaryColor); // Bottom bar
+      doc.fillColor(greyText).fontSize(10).font("Helvetica");
+      doc.text("Subtotal", totalBoxX + 15, yPos);
+      doc.fillColor(darkText).text(`$${Number(totalAmount).toFixed(2)}`, amountColX, yPos, { width: amountColWidth, align: "right" });
       
-      doc.fillColor(white).fontSize(10).font("Helvetica-Bold")
-         .text("BizTech Biz Digital", 0, footerY + 15, { align: "center" });
+      yPos += 20;
+
+      doc.fillColor(greyText).text("Tax (0%)", totalBoxX + 15, yPos);
+      doc.fillColor(darkText).text("$0.00", amountColX, yPos, { width: amountColWidth, align: "right" });
+
+      yPos += 25;
+
+      doc.rect(totalBoxX, yPos - 10, totalBoxWidth, 50).fill(primaryColor);
       
-      doc.fillColor(accentColor).fontSize(9).font("Helvetica")
-         .text("services@biztech.ae  |  +971 50 328 8786  |  www.biztech.ae", 0, footerY + 30, { align: "center" });
+      doc.fillColor("#FFFFFF").fontSize(12).font("Helvetica-Bold");
+      doc.text("Total Estimate", totalBoxX + 20, yPos + 8);
+      
+      doc.fillColor(accentColor).fontSize(16).font("Helvetica-Bold");
+      doc.text(`$${Number(totalAmount).toFixed(2)}`, amountColX, yPos + 6, { width: amountColWidth, align: "right" });
+
+      yPos += 60;
+
+      // --- TERMS SECTION ---
+      yPos += 30;
+
+      if (yPos + 100 > contentBottomLimit) {
+          doc.addPage();
+          yPos = 50;
+      }
+      
+      doc.fillColor(primaryColor).fontSize(11).font("Helvetica-Bold").text("Terms & Conditions", margin, yPos);
+      
+      doc.rect(margin, yPos + 15, 30, 3).fill(accentColor); 
+
+      doc.fillColor(greyText).fontSize(9).font("Helvetica")
+         .text("1. Payment Terms: 50% upfront deposit required to commence work.", margin, yPos + 30)
+         .text("2. Validity: This proposal is valid for 14 days from the date of issue.", margin, yPos + 45)
+         .text("3. Delivery: Final assets transferred upon full payment completion.", margin, yPos + 60);
+
+      // --- FOOTER (Applied to all pages) ---
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        
+        // Use a safe vertical position for footer
+        const footerY = 800; 
+        
+        // Draw background
+        doc.rect(0, footerY, pageWidth, 42).fill(lightBg);
+        doc.moveTo(0, footerY).lineTo(pageWidth, footerY).strokeColor(borderColor).stroke();
+        
+        // Draw text
+        // Ensure fill color is set explicitly
+        doc.fillColor(greyText).opacity(1); 
+        
+        // Use absolute positioning with 'lineBreak: false' to prevent wrapping/breaking issues
+        doc.fontSize(8).font("Helvetica")
+           .text(
+             "services@biztech.ae  •  +971 50 328 8786  •  www.biztech.ae", 
+             0, 
+             footerY + 16, 
+             { 
+               align: "center", 
+               width: pageWidth,
+               lineBreak: false 
+             }
+           );
+      }
 
       doc.end();
 
       writeStream.on("finish", () => {
-        // Return relative path for DB storage
         resolve(`uploads/proposals/${fileName}`);
       });
 

@@ -115,7 +115,7 @@ exports.getAssets = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-// --- NEW FUNCTIONS FOR NOTES ---
+// --- NEW FUNCTIONS FOR NOTES (SECURED) ---
 
 exports.addNote = async (req, res, next) => {
     try {
@@ -124,6 +124,22 @@ exports.addNote = async (req, res, next) => {
 
         if (!content) return res.status(400).json({ message: "Content is required" });
 
+        // 1. Fetch Project to validate access
+        const project = await Project.findByPk(projectId);
+        if (!project) return res.status(404).json({ message: "Project not found" });
+
+        // 2. Security Check (IDOR Prevention)
+        if (req.user.role === 'Agent' && project.agentId !== req.user.id) {
+            return res.status(403).json({ message: "Access denied to this project discussion" });
+        }
+        if (req.user.role === 'Client') {
+            const client = await Client.findOne({ where: { userId: req.user.id } });
+            if (!client || project.clientId !== client.id) {
+                return res.status(403).json({ message: "Access denied to this project discussion" });
+            }
+        }
+
+        // 3. Create Note
         const note = await ProjectNote.create({
             projectId,
             userId: req.user.id,
@@ -140,8 +156,26 @@ exports.addNote = async (req, res, next) => {
 
 exports.getNotes = async (req, res, next) => {
     try {
+        const projectId = req.params.id;
+
+        // 1. Fetch Project to validate access
+        const project = await Project.findByPk(projectId);
+        if (!project) return res.status(404).json({ message: "Project not found" });
+
+        // 2. Security Check (IDOR Prevention)
+        if (req.user.role === 'Agent' && project.agentId !== req.user.id) {
+            return res.status(403).json({ message: "Access denied to this project discussion" });
+        }
+        if (req.user.role === 'Client') {
+            const client = await Client.findOne({ where: { userId: req.user.id } });
+            if (!client || project.clientId !== client.id) {
+                return res.status(403).json({ message: "Access denied to this project discussion" });
+            }
+        }
+
+        // 3. Fetch Notes
         const notes = await ProjectNote.findAll({
-            where: { projectId: req.params.id },
+            where: { projectId },
             include: [{ model: User, as: 'Author', attributes: ['fullName', 'role'] }],
             order: [['createdAt', 'ASC']]
         });
