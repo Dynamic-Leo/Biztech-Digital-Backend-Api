@@ -9,6 +9,27 @@ module.exports = (sequelize, DataTypes) => {
     status: { 
         type: DataTypes.ENUM('Pending Approval', 'Active', 'Rejected'),
         defaultValue: 'Pending Approval' 
+    },
+
+    emailVerificationToken: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    emailVerificationTokenExpiry: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+    isEmailVerified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+    resetPasswordToken: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    resetPasswordExpire: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   });
 
