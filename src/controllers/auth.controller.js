@@ -193,17 +193,26 @@ exports.forgotPassword = async (req, res) => {
     const user = await User.findOne({ where: { email } });
 
     if (user) {
-      const resetToken = crypto.randomBytes(32).toString("hex");
-      user.resetPasswordToken = crypto.createHash("sha256").update(resetToken).digest("hex");
-      user.resetPasswordExpire = new Date(Date.now() + 10 * 60 * 1000); // Token expires in 10 minutes
-      await user.save();
 
-      // Send password reset email
-      try {
-        await sendPasswordResetEmail(user.email, resetToken);
-      } catch (emailError) {
-        console.error("Failed to send password reset email:", emailError);
-      }
+        const resetToken = crypto.randomBytes(32).toString('hex');
+            
+        // Set fields matching model definition
+        user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        user.passwordResetTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+        
+        try {
+            await user.save();
+        } catch (dbError) {
+            user.rollback(); 
+            console.error("DB Save Error (Forgot Password):", dbError);
+            return res.status(500).json({ message: "Database Error: Unable to save reset token." });
+        }
+
+        axios.post(`${getEmailServiceUrl()}/api/send/password-reset-email`, {
+            email: user.email,
+            passwordResetToken: resetToken,
+            domainName: process.env.FRONTEND_URL,
+        }).catch(err => console.error("Email Service Error (Forgot Password):", err.message));
     }
 
     res.status(200).json({ 
