@@ -28,7 +28,6 @@ exports.register = async (req, res, next) => {
 
     const t = await db.sequelize.transaction();
     try {
-
         const emailVerificationToken = crypto.randomBytes(32).toString('hex');
         const emailVerificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -40,15 +39,14 @@ exports.register = async (req, res, next) => {
             isEmailVerified: false,
         }, { transaction: t });
 
-        if (role === 'Client') {
-            await Client.create({ 
-                userId: user.id, 
-                companyName,
-                emailVerificationToken,
-                emailVerificationTokenExpiry,
-                isEmailVerified: false,
-            }, { transaction: t });
-        }
+        await Client.create({ 
+            userId: user.id,
+            status: 'Pending Approval', 
+            companyName,
+            emailVerificationToken,
+            emailVerificationTokenExpiry,
+            isEmailVerified: false,
+        }, { transaction: t });
 
         await t.commit();
 
@@ -102,7 +100,7 @@ exports.login = async (req, res, next) => {
         return res.status(403).json({ message: `Account is ${user.status}. Contact Admin.` });
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ token, user: { id: user.id, name: user.fullName, role: user.role } });
   } catch (error) { next(error); }
 };
@@ -168,7 +166,6 @@ exports.verifyEmail = async (req, res, next) => {
     user.isEmailVerified = true;
     user.emailVerificationToken = null;
     user.emailVerificationTokenExpiry = null;
-    user.status = 'PENDING';
 
     await user.save();
 
@@ -193,26 +190,25 @@ exports.forgotPassword = async (req, res) => {
     const user = await User.findOne({ where: { email } });
 
     if (user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+          
+      // Set fields matching model definition
+      user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+      user.resetPasswordExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
-        const resetToken = crypto.randomBytes(32).toString('hex');
-            
-        // Set fields matching model definition
-        user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-        user.passwordResetTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
-        
-        try {
-            await user.save();
-        } catch (dbError) {
-            user.rollback(); 
-            console.error("DB Save Error (Forgot Password):", dbError);
-            return res.status(500).json({ message: "Database Error: Unable to save reset token." });
-        }
+      try {
+          await user.save();
+      } catch (dbError) {
+          user.rollback(); 
+          console.error("DB Save Error (Forgot Password):", dbError);
+          return res.status(500).json({ message: "Database Error: Unable to save reset token." });
+      }
 
-        axios.post(`${getEmailServiceUrl()}/api/send/password-reset-email`, {
-            email: user.email,
-            passwordResetToken: resetToken,
-            domainName: process.env.FRONTEND_URL,
-        }).catch(err => console.error("Email Service Error (Forgot Password):", err.message));
+      axios.post(`${process.env.EMAIL_SERVICE_URL}/api/send/password-reset-email`, {
+          email: user.email,
+          passwordResetToken: resetToken,
+          domainName: process.env.FRONTEND_URL,
+      }).catch(err => console.error("Email Service Error (Forgot Password):", err.message));
     }
 
     res.status(200).json({ 

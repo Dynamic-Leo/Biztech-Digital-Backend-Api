@@ -25,6 +25,7 @@ exports.getPendingUsers = async (req, res, next) => {
 exports.getAllClients = async (req, res, next) => {
     try {
         const clients = await Client.findAll({
+            where: { User: { role: 'Client' } },
             include: [
                 { 
                     model: User, 
@@ -43,7 +44,7 @@ exports.getAllClients = async (req, res, next) => {
                     attributes: ['id'],
                     required: false // Left Join
                 }
-            ]
+            ]   
         });
 
         // Map data safely
@@ -138,7 +139,7 @@ exports.createAgent = async (req, res, next) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const agent = await User.create({
-            fullName, email, password: hashedPassword, role: 'Agent', mobile, status: 'Active'
+            fullName, email, password: hashedPassword, role: 'Agent', mobile, status: 'Active', isEmailVerified: true
         });
         res.status(201).json({ message: "Agent created", agent: { id: agent.id, email: agent.email } });
     } catch (error) { next(error); }
