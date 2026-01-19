@@ -25,12 +25,12 @@ exports.getPendingUsers = async (req, res, next) => {
 exports.getAllClients = async (req, res, next) => {
     try {
         const clients = await Client.findAll({
-            where: { User: { role: 'Client' } },
             include: [
                 { 
                     model: User, 
                     as: 'User',
-                    attributes: ['id', 'fullName', 'email', 'mobile', 'status', 'createdAt'] 
+                    attributes: ['id', 'fullName', 'email', 'mobile', 'status', 'createdAt'],
+                    where: { role: 'Client' } 
                 },
                 {
                     model: db.Project,

@@ -89,6 +89,7 @@ exports.login = async (req, res, next) => {
             email: user.email,
             emailVerificationToken: emailVerificationToken,
             domainName: process.env.FRONTEND_URL
+            
         }).catch(err => {
             console.error("Failed to call email micro-service");
         });
