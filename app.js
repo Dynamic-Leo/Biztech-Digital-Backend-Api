@@ -10,8 +10,17 @@ const { errorMiddleware } = require("./src/middleware/error.middleware");
 const app = express();
 
 // Middleware
-app.use(helmet()); // Security headers
-app.use(cors());   // Allow frontend requests
+app.use(helmet());
+
+app.use(cors({
+  origin: [
+    "https://digital.biztech.ae",
+    "https://www.digital.biztech.ae"
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev")); // Logger
@@ -19,11 +28,12 @@ app.use(morgan("dev")); // Logger
 // Static Folders
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// Basic Route (To test if it works)
+// Basic Route
 app.get("/", (req, res) => {
   res.json({ message: "BizTech API is running..." });
 });
 
+// Routes
 app.use("/api/v1/auth", require("./src/api/auth.routes"));
 app.use("/api/v1/admin", require("./src/api/admin.routes"));
 app.use("/api/v1/clients", require("./src/api/client.routes"));
@@ -38,7 +48,7 @@ const PORT = process.env.PORT || 3000;
 
 // Sync DB and Start Server
 db.sequelize
-  .sync({ alter: true }) // 'alter: true' updates tables if you change models
+  .sync({ alter: true }) 
   .then(() => {
     console.log("✅ Database Connected & Synced");
     app.listen(PORT, () => {
