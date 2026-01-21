@@ -52,7 +52,7 @@ exports.createProposal = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-exports.sendProposalEmail = async (req, res, next) => {
+exports.sendProposal = async (req, res, next) => {
     let proposalId = req.params.id;
 
     const proposalInfo = await Proposal.findByPk(proposalId);
@@ -89,6 +89,9 @@ exports.sendProposalEmail = async (req, res, next) => {
         });
 
         if (response.status === 200) {
+            await proposalInfo.update({ status: 'Sent' });
+            await ServiceRequest.update({ status: 'Quoted' }, { where: { id: proposalInfo.requestId } });
+            
             res.status(200).json({ message: "Proposal email sent successfully." });
         } else {
             res.status(500).json({ message: "Failed to send proposal email via external service." });
