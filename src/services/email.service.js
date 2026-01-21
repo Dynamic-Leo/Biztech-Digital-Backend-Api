@@ -1,4 +1,6 @@
 const nodemailer = require("nodemailer");
+const { wrapInTemplate } = require("../templates/utils");
+const proposalEmailTemplate = require("../templates/proposalEmailTemplate");
 const path = require("path");
 const fs = require("fs");
 
@@ -48,61 +50,35 @@ exports.sendAccountApproval = async (email, name) => {
   return sendEmail({ to: email, subject, html });
 };
 
-// 2. Send Proposal Email (THE FIX IS HERE)
+// Helper function to create content for proposal email
+const generateProposalEmailContent = (clientName, agentName) => {
+  return proposalEmailTemplate(clientName, agentName);
+};
+
+// Send the proposal email
 exports.sendProposalEmail = async ({
   clientName,
   clientEmail,
   agentName,
   agentEmail,
   pdfPath,
-  proposalId,
-  totalAmount
+  domainName
 }) => {
-  const subject = `Your BizTech Proposal #${proposalId}`;
-  
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #333;">Your Project Proposal is Ready</h2>
-      <p>Hello ${clientName},</p>
-      <p>Please find attached your project proposal <strong>#${proposalId}</strong> prepared by <strong>${agentName}</strong>.</p>
-      ${totalAmount ? `<p><strong>Total Amount:</strong> $${totalAmount}</p>` : ''}
-      <p>Review the proposal and feel free to reply to this email if you have any questions.</p>
-      <br>
-      <p>Best regards,<br>
-      <strong>${agentName}</strong><br>
-      BizTech Team</p>
-    </div>
-  `;
-
-  // --- CRITICAL FIX START ---
-  // Ensure we are looking for the file starting from the root of the project
-  // regardless of where the script was called from.
-  let fullPath = pdfPath;
-  if (!path.isAbsolute(pdfPath)) {
-      fullPath = path.join(process.cwd(), pdfPath);
-  }
-
-  // Check if file exists to prevent server crash
-  if (!fs.existsSync(fullPath)) {
-      console.error(`❌ CRITICAL ERROR: Proposal PDF missing at path: ${fullPath}`);
-      throw new Error("Server Error: The generated PDF file could not be found on the server.");
-  }
-  // --- CRITICAL FIX END ---
-
-  const attachments = [
-    {
-      filename: `Proposal-${proposalId}.pdf`,
-      path: fullPath,
-      contentType: "application/pdf",
-    },
-  ];
+  const content = generateProposalEmailContent(clientName, agentName);
 
   return sendEmail({
     to: clientEmail,
-    subject,
-    html,
+    subject: `Your BizDigital Proposal from ${agentName}`,
+    html: wrapInTemplate("Proposal from BizDigital", content),
     replyTo: agentEmail,
-    attachments,
+    attachments: [
+      {
+        filename: path.basename(pdfPath),
+        path: pdfPath,
+        contentType: "application/pdf",
+      },
+    ],
+    domainName
   });
 };
 
